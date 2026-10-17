@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyOrder, move } from '../src/customOrder';
 import { memoryKV, UserState } from '../src/storage';
+import { zoomAt } from '../src/ui';
 
 describe('applyOrder', () => {
   it('без сохранённого порядка оставляет исходный', () => {
@@ -66,5 +67,26 @@ describe('UserState', () => {
     const u = new UserState(memoryKV());
     expect(() => u.importData({ hello: 1 })).toThrow();
     expect(() => u.importData({ format: 'animelib-watch-order/v1', watched: 'oops' })).toThrow();
+  });
+});
+
+describe('zoomAt', () => {
+  it('точка под курсором остаётся на месте', () => {
+    // экранная позиция локальной точки q: центр + сдвиг + scale * q
+    const screen = (v: { scale: number; x: number; y: number }, q: { x: number; y: number }) => ({ x: v.x + v.scale * q.x, y: v.y + v.scale * q.y });
+    let v = { scale: 1, x: 0, y: 0 };
+    for (const [factor, d] of [[2, { x: 100, y: -40 }], [1.5, { x: -20, y: 60 }], [0.8, { x: 5, y: 5 }]] as const) {
+      const q = { x: (d.x - v.x) / v.scale, y: (d.y - v.y) / v.scale };
+      v = zoomAt(v, factor, d);
+      const p = screen(v, q);
+      expect(p.x).toBeCloseTo(d.x, 6);
+      expect(p.y).toBeCloseTo(d.y, 6);
+    }
+  });
+
+  it('не уходит меньше исходного и больше предела, на 1 сбрасывает сдвиг', () => {
+    expect(zoomAt({ scale: 1, x: 0, y: 0 }, 0.5, { x: 10, y: 10 })).toEqual({ scale: 1, x: 0, y: 0 });
+    expect(zoomAt({ scale: 6, x: 5, y: 5 }, 10, { x: 0, y: 0 }).scale).toBe(8);
+    expect(zoomAt({ scale: 2, x: 30, y: 30 }, 0.1, { x: 0, y: 0 })).toEqual({ scale: 1, x: 0, y: 0 });
   });
 });

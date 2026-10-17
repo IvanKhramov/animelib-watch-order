@@ -5,7 +5,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.0
+// @version      0.3.1
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -1058,9 +1058,10 @@ summary{cursor:pointer;color:var(--muted)}
 .cover img{width:100%;height:100%;object-fit:cover;display:block}
 .cover.empty{cursor:default}
 .zoom{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
-  background:rgba(0,0,0,.75);cursor:zoom-out;padding:24px}
-.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
-.zoom div{color:#fff;font-size:14px;text-align:center;max-width:90vw}
+  background:rgba(0,0,0,.8);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none}
+.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
+  transform-origin:center;user-select:none;will-change:transform}
+.zoom .cap{position:relative;z-index:1;color:#fff;font-size:14px;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
 `;
   var KIND_LABEL = {
     main: "",
@@ -1070,6 +1071,12 @@ summary{cursor:pointer;color:var(--muted)}
     spinoff: "Спин-офф",
     other: "Другое"
   };
+  function zoomAt(v, factor, d, min = 1, max = 8) {
+    const scale = Math.min(max, Math.max(min, v.scale * factor));
+    if (scale === 1) return { scale: 1, x: 0, y: 0 };
+    const k = scale / v.scale;
+    return { scale, x: d.x - k * (d.x - v.x), y: d.y - k * (d.y - v.y) };
+  }
   var yearOf = (d) => d?.year ? String(d.year) : void 0;
   function h(tag, props = {}, ...children) {
     const e = document.createElement(tag);
@@ -1402,22 +1409,70 @@ summary{cursor:pointer;color:var(--muted)}
       img.referrerPolicy = "no-referrer";
       return h("button", { class: "cover", title: "Увеличить", onClick: () => this.zoom(it) }, img);
     }
-    /** Крупная обложка поверх страницы; закрывается кликом или Esc. */
+    /**
+     * Крупная обложка поверх страницы. Колесо приближает к курсору, приближённую картинку можно таскать,
+     * двойной клик сбрасывает масштаб. Закрытие: клик по пустому месту или Esc.
+     */
     zoom(it) {
       const img = h("img");
       img.src = it.coverLarge ?? it.cover ?? "";
       img.alt = it.title;
       img.referrerPolicy = "no-referrer";
-      const layer = h("div", { class: "zoom" }, img, h("div", { text: it.title }));
+      img.draggable = false;
+      const layer = h("div", { class: "zoom" }, img, h("div", { class: "cap", text: it.title }));
+      let view = { scale: 1, x: 0, y: 0 };
+      const apply = () => {
+        img.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        img.style.cursor = view.scale > 1 ? "grab" : "zoom-in";
+      };
       const close = () => {
         layer.remove();
         document.removeEventListener("keydown", onKey, true);
       };
       const onKey = (e) => {
-        if (e.key === "Escape") close();
+        if (e.key !== "Escape") return;
+        e.stopPropagation();
+        close();
       };
-      layer.addEventListener("click", close);
+      layer.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          const r = img.getBoundingClientRect();
+          const center = { x: r.left + r.width / 2 - view.x, y: r.top + r.height / 2 - view.y };
+          view = zoomAt(view, Math.exp(-e.deltaY * 15e-4), { x: e.clientX - center.x, y: e.clientY - center.y });
+          apply();
+        },
+        { passive: false }
+      );
+      let drag;
+      img.addEventListener("pointerdown", (e) => {
+        if (view.scale <= 1) return;
+        drag = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
+        img.setPointerCapture(e.pointerId);
+        img.style.cursor = "grabbing";
+      });
+      img.addEventListener("pointermove", (e) => {
+        if (!drag) return;
+        const dx = e.clientX - drag.px;
+        const dy = e.clientY - drag.py;
+        if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+        view = { ...view, x: drag.x + dx, y: drag.y + dy };
+        apply();
+      });
+      img.addEventListener("pointerup", () => {
+        drag = void 0;
+        apply();
+      });
+      img.addEventListener("dblclick", () => {
+        view = { scale: 1, x: 0, y: 0 };
+        apply();
+      });
+      layer.addEventListener("click", (e) => {
+        if (e.target !== img) close();
+      });
       document.addEventListener("keydown", onKey, true);
+      apply();
       this.box.append(layer);
     }
     exportFile() {
