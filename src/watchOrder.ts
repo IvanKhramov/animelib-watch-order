@@ -1,4 +1,5 @@
 import { AniListClient } from './anilistAdapter';
+import type { CommunityOrdersClient } from './communityOrders';
 import { dateKey } from './dates';
 import { isAbort } from './http';
 import { matchParts, matchTitles, pickVerified } from './matching';
@@ -22,6 +23,7 @@ export const FORMAT_LABEL: Record<MediaFormat, string> = {
 export interface Deps {
   adapter: SiteAdapter;
   anilist: AniListClient;
+  community?: CommunityOrdersClient;
   user: UserState;
   ctx: LoadCtx;
 }
@@ -213,14 +215,33 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
 
   // Граф из альтернативной точки входа может не дойти до частей проверенного маршрута.
   // Один дополнительный пакет только по известным ID, без расширения соседних франшиз.
-  const profile = profileForId(rootId);
+  let profile = profileForId(rootId);
+  if (deps.community) {
+    const imported = await deps.community.load(rootId, ctx);
+    if (!profile) profile = imported.profile;
+    else if (imported.profile?.chronological) {
+      const variants = [
+        ...(profile.chronological ? [{ ...profile.chronological, variantId: 'editorial', label: 'Редакционный', checkedAt: profile.checkedAt }] : []),
+        ...(imported.profile.chronologicalVariants ?? [imported.profile.chronological]),
+      ];
+      profile = { ...profile, chronological: variants[0], chronologicalVariants: variants.length > 1 ? variants : undefined };
+    }
+    if (imported.note) notes.push(imported.note);
+  }
   if (profile) {
-    const ids = [...new Set([...profile.recommended.steps, ...(profile.chronological?.steps ?? [])].map((step) => step.alId))]
+    const routes = [profile.recommended, ...(profile.chronologicalVariants ?? (profile.chronological ? [profile.chronological] : []))];
+    const ids = [...new Set(routes.flatMap((route) => route.steps).map((step) => step.alId))]
       .filter((id) => !g.nodes.has(id));
     if (ids.length) {
       try {
         const nodes = await ctx.cache.wrap(`profile-nodes:${profile.id}:${profile.checkedAt}`, ids.join(','), DAY,
-          () => deps.anilist.getByIds(ids, ctx.signal), ctx.force);
+          async () => {
+            const loaded: AlMedia[] = [];
+            for (let start = 0; start < Math.min(ids.length, 100); start += 50) {
+              loaded.push(...await deps.anilist.getByIds(ids.slice(start, start + 50), ctx.signal));
+            }
+            return loaded;
+          }, ctx.force);
         for (const node of nodes) g.nodes.set(node.id, node);
       } catch (e) {
         if (isAbort(e)) throw e;
@@ -300,6 +321,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   return {
     mode: 'anilist',
     rootAlId: rootId,
+    orderProfile: profile,
     // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
     franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
     items: ordering.all.flatMap(expand),

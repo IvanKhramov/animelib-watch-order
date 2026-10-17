@@ -16,11 +16,30 @@ const click = (view: WatchOrderView, text: string) => {
 };
 
 describe('переключение режимов', () => {
+  it('позволяет выбрать источник событийного порядка без смешивания вариантов', () => {
+    const user = new UserState(memoryKV());
+    user.setPrefs({ orderMode: 'chronological' });
+    const view = new WatchOrderView(user, handlers);
+    const a = { variantId: 'reddit', label: 'r/anime', origin: 'community' as const, steps: [{ alId: 1 }, { alId: 2 }], note: 'Порядок A.', sources: [] };
+    const b = { ...a, variantId: 'shiki', label: 'Shikimori', steps: [{ alId: 2 }, { alId: 1 }] };
+    const raw = result([item('first'), item('second', { alId: 2 })]);
+    raw.orderProfile = { id: 'test', title: 'Test', anchorIds: [1, 2], checkedAt: '2026-10-17', recommended: a,
+      chronological: a, chronologicalVariants: [a, b] };
+    view.set({ status: 'ready', result: raw });
+    expect(titles(view)).toEqual(['first', 'second']);
+    click(view, 'Shikimori');
+    expect(titles(view)).toEqual(['second', 'first']);
+    expect(view.root.shadowRoot!.querySelector('[aria-label="Источник хронологии"] [aria-pressed=true]')?.textContent).toBe('Shikimori');
+  });
+
   it('меняет порядок сразу, сохраняет выбор и не вызывает загрузку', () => {
     const user = new UserState(memoryKV());
     const callbacks = { refresh: vi.fn(), reload: vi.fn(), hideOnSite: vi.fn() };
     const view = new WatchOrderView(user, callbacks);
     const raw = result([item('later', { date: { year: 2020 } }), item('earlier', { alId: 2, date: { year: 2010 } })]);
+    raw.orderProfile = { id: 'test', title: 'Test', anchorIds: [1, 2], checkedAt: '2026-10-17', recommended: {
+      steps: [{ alId: 1 }, { alId: 2 }], note: 'Первый просмотр.', sources: [],
+    } };
     view.set({ status: 'ready', result: raw });
     expect(titles(view)).toEqual(['later', 'earlier']);
     click(view, 'По выходу');
@@ -57,6 +76,9 @@ describe('переключение режимов', () => {
     const chrono = view.root.shadowRoot!.querySelector<HTMLButtonElement>('[data-mode=chronological]')!;
     expect(chrono.disabled).toBe(true);
     expect(view.root.shadowRoot!.textContent).toContain('Проверенной хронологии');
+    expect(titles(view)).toEqual(['unknown']);
+    expect(view.root.shadowRoot!.querySelector('[aria-pressed=true]')?.textContent).toBe('Рекомендованный');
+    expect(user.prefs().orderMode).toBe('chronological');
     click(view, 'По выходу');
     expect(titles(view)).toEqual(['unknown']);
   });

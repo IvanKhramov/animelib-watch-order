@@ -162,6 +162,7 @@ export class WatchOrderView {
   private state: UiState = { status: 'loading' };
   private editing = false;
   private menuOpen = false;
+  private chronologyId?: string;
 
   constructor(
     private readonly user: UserState,
@@ -191,7 +192,10 @@ export class WatchOrderView {
   }
 
   private result(): ModeResult | undefined {
-    return this.state.status === 'ready' ? selectOrder(this.state.result, this.user.prefs().orderMode) : undefined;
+    if (this.state.status !== 'ready') return undefined;
+    const selected = selectOrder(this.state.result, this.user.prefs().orderMode, undefined, this.chronologyId);
+    // Глобально выбранная хронология не оставляет пустой блок у следующей франшизы.
+    return selected.available ? selected : selectOrder(this.state.result, 'recommended');
   }
 
   private custom(res: ModeResult) {
@@ -365,9 +369,23 @@ export class WatchOrderView {
       controls.append(button);
     }
     const info = h('div', { class: 'order-info' },
-      h('strong', { text: this.custom(res) ? 'Порядок с вашими правками. ' : res.verified ? 'Проверенный маршрут. ' : '' }), res.explanation);
+      h('strong', { text: this.custom(res) ? 'Порядок с вашими правками. ' : res.verified ? 'Проверенный маршрут. ' : res.communityRoute ? 'Порядок сообщества. ' : '' }), res.explanation);
     info.setAttribute('aria-live', 'polite');
     const out: HTMLElement[] = [controls, info];
+    if (res.selectedMode === 'chronological' && res.profile?.chronologicalVariants) {
+      const sources = h('div', { class: 'order-modes' });
+      sources.setAttribute('role', 'group');
+      sources.setAttribute('aria-label', 'Источник хронологии');
+      const selectedId = (res.profile.chronologicalVariants.find((route) => route.variantId === this.chronologyId) ?? res.profile.chronologicalVariants[0])?.variantId;
+      for (const [index, route] of res.profile.chronologicalVariants.entries()) {
+        const active = route.variantId === selectedId;
+        const button = h('button', { class: 'btn' + (active ? ' on' : ''), text: route.label ?? `Вариант ${index + 1}`,
+          onClick: () => { this.chronologyId = route.variantId; this.editing = false; this.render(); } });
+        button.setAttribute('aria-pressed', String(active));
+        sources.append(button);
+      }
+      out.splice(1, 0, sources);
+    }
     if (res.selectedMode !== 'chronological' && !chronology?.available) {
       out.push(h('div', { class: 'note', text: `По событиям: ${chronology?.explanation}` }));
     }
@@ -443,7 +461,7 @@ export class WatchOrderView {
       const d = h('details');
       d.open = this.user.prefs().branchesOpen;
       d.addEventListener('toggle', () => this.user.setPrefs({ branchesOpen: d.open }));
-      d.append(h('summary', { text: `${res.verified ? 'Вне проверенного маршрута' : 'Альтернативы и прочее'} (${res.branches.length})` }));
+      d.append(h('summary', { text: `${res.verified ? 'Вне проверенного маршрута' : res.communityRoute ? 'Вне маршрута источника' : 'Альтернативы и прочее'} (${res.branches.length})` }));
       const list = h('ol');
       for (const it of res.branches) list.append(this.row(it, undefined));
       d.append(list);

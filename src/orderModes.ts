@@ -13,6 +13,7 @@ export interface ModeResult extends OrderResult {
   orderKey: string;
   legacyOrderKeys: string[];
   verified: boolean;
+  communityRoute: boolean;
   available: boolean;
   explanation: string;
   sources: OrderSource[];
@@ -24,20 +25,25 @@ export function findProfile(result: OrderResult, profiles = ORDER_PROFILES): Ord
   const current = [...result.items, ...result.branches].find((item) => item.isCurrent)?.alId;
   const id = result.rootAlId ?? current ?? Number(result.franchiseKey.match(/^al:(\d+)$/)?.[1]);
   if (!id || result.mode !== 'anilist') return undefined;
+  if (result.orderProfile?.anchorIds.includes(id)) return result.orderProfile;
   return profiles.find((profile) => profile.anchorIds.includes(id));
 }
 
-export function selectOrder(result: OrderResult, selectedMode: WatchOrderMode, profiles = ORDER_PROFILES): ModeResult {
+export function selectOrder(result: OrderResult, selectedMode: WatchOrderMode, profiles = ORDER_PROFILES, chronologyId?: string): ModeResult {
   const profile = findProfile(result, profiles);
   const franchiseKey = profile ? `al:${profile.anchorIds[0]}` : result.franchiseKey;
+  const variants = profile?.chronologicalVariants;
+  const chronology = variants?.find((route) => route.variantId === chronologyId) ?? profile?.chronological;
+  const hasVariants = selectedMode === 'chronological' && !!variants?.length;
   const base: ModeResult = {
     ...result, selectedMode, profile,
     // Старые пользовательские правки продолжают действовать в рекомендованном режиме.
-    orderKey: selectedMode === 'recommended' ? franchiseKey : `${franchiseKey}:${selectedMode}`,
+    orderKey: selectedMode === 'recommended' ? franchiseKey : hasVariants
+      ? `${franchiseKey}:chronological:${chronology?.variantId ?? 'default'}` : `${franchiseKey}:${selectedMode}`,
     legacyOrderKeys: selectedMode === 'recommended'
       ? [...new Set([result.franchiseKey, ...(profile?.anchorIds.map((id) => `al:${id}`) ?? [])])].filter((key) => key !== franchiseKey)
-      : [],
-    verified: false, available: true, sources: [], explanation: '',
+      : hasVariants && chronology === variants?.[0] ? [`${franchiseKey}:chronological`] : [],
+    verified: false, communityRoute: false, available: true, sources: [], explanation: '',
   };
   if (selectedMode === 'release') {
     const items = [...result.items, ...result.branches].sort((a, b) => dateKey(a.date) - dateKey(b.date));
@@ -46,16 +52,21 @@ export function selectOrder(result: OrderResult, selectedMode: WatchOrderMode, p
       explanation: 'По датам начала выхода тайтлов. Альтернативные версии и спин-оффы не обязательны для просмотра. Неполные даты приблизительны, неизвестные — в конце.',
     };
   }
-  const route = selectedMode === 'recommended' ? profile?.recommended : profile?.chronological;
+  const candidate = selectedMode === 'recommended' ? profile?.recommended : chronology;
+  const route = candidate?.steps.length ? candidate : undefined;
   if (!route) {
     return {
       ...base, available: selectedMode !== 'chronological',
-      items: selectedMode === 'chronological' ? [] : result.items,
+      items: selectedMode === 'chronological' ? [] : [...result.items].sort((a, b) => dateKey(a.date) - dateKey(b.date)),
+      sources: selectedMode === 'recommended' && result.rootAlId ? [{ label: 'AniList: связи и даты выхода', url: `https://anilist.co/anime/${result.rootAlId}` }] : [],
       explanation: selectedMode === 'chronological'
         ? profile?.chronologyUnavailable ?? 'Проверенной хронологии событий пока нет. Можно выбрать порядок по выходу.'
-        : 'Автоматический порядок по связям и датам. Проверенного маршрута для первого просмотра пока нет.',
+        : result.mode === 'anilist'
+          ? 'Автоматически для первого просмотра: выбранная ветка по датам выхода. Пересказы, дополнительные материалы и альтернативы отмечены отдельно. Это общий алгоритм, без отдельного гайда для франшизы.'
+          : 'Автоматически по данным сайта. Если даты или связи отсутствуют, точный порядок не определён.',
     };
   }
+  const imported = route.origin === 'community' || profile!.origin === 'community';
   const all = [...result.items, ...result.branches];
   const byId = new Map<number, OrderItem[]>();
   for (const item of all) {
@@ -86,13 +97,13 @@ export function selectOrder(result: OrderResult, selectedMode: WatchOrderMode, p
   }
   const missing = route.steps.filter((step) => !byId.has(step.alId));
   const branches = all.filter((item) => item.alId === undefined || !included.has(item.alId)).map((item) => ({
-    ...item, flags: [...item.flags, 'вне проверенного маршрута'],
+    ...item, flags: [...item.flags, imported ? 'вне маршрута источника' : 'вне проверенного маршрута'],
   }));
   const notes = [...result.notes];
   if (missing.length) notes.push(`В загруженных данных нет ${new Set(missing.map((step) => step.alId)).size} частей проверенного маршрута. Список неполный.`);
   if (route.steps.some((step) => step.episodes)) notes.push('Диапазоны серий относятся к указанному тайтлу. Отметка «просмотрено» общая для всех его диапазонов.');
   return {
-    ...base, items, branches, notes, verified: true, sources: route.sources,
-    explanation: `${missing.length ? 'Маршрут неполный: часть тайтлов не загрузилась. ' : ''}${route.note} Проверено: ${profile!.checkedAt}. Части вне маршрута показаны отдельно.`,
+    ...base, items, branches, notes, verified: !imported, communityRoute: imported, sources: route.sources,
+    explanation: `${missing.length ? 'Маршрут неполный: часть тайтлов не загрузилась. ' : ''}${route.note} ${imported ? 'Сведения источника' : 'Проверено'}: ${route.checkedAt ?? profile!.checkedAt}. Части вне маршрута показаны отдельно.`,
   };
 }

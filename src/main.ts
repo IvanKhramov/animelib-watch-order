@@ -1,4 +1,5 @@
 import { AniListClient } from './anilistAdapter';
+import { CommunityOrdersClient } from './communityOrders';
 import { gmKV, gmMenuCommand, gmTransport } from './gm';
 import { fetchTransport, isAbort, withRetry } from './http';
 import { createAnimego } from './sites/animego';
@@ -20,6 +21,7 @@ function start(adapter: SiteAdapter) {
   const cache = new Cache(kv);
   const user = new UserState(kv);
   const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, rateLimit: { max: 25, windowMs: 60_000 } }));
+  const community = new CommunityOrdersClient(gmTransport);
   let session: Session | null = null;
 
   const load = (s: Session, force: boolean) => {
@@ -37,7 +39,7 @@ function start(adapter: SiteAdapter) {
         message: 'данные не пришли за 60 секунд. Проверьте, что менеджер скриптов разрешил доступ к graphql.anilist.co, и нажмите «Обновить».',
       });
     }, 60_000);
-    buildWatchOrder(s.key, { adapter, anilist, user, ctx })
+    buildWatchOrder(s.key, { adapter, anilist, community, user, ctx })
       .finally(() => clearTimeout(timer))
       .then((result) => {
         if (session === s && !ctx.signal.aborted) s.view.set({ status: 'ready', result });

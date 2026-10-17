@@ -1,0 +1,53 @@
+name: Update community watch orders
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/community-orders.yml'
+      - 'scripts/import-community-orders.mjs'
+      - 'scripts/import-shikimori-orders.mjs'
+      - 'scripts/update-community-orders.mjs'
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: community-orders
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Import unambiguous orders from the source
+        run: |
+          cp data/community-orders.json /tmp/community-orders-previous.json
+          npm run update-orders
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          const before = JSON.parse(readFileSync('/tmp/community-orders-previous.json', 'utf8'));
+          const after = JSON.parse(readFileSync('data/community-orders.json', 'utf8'));
+          if (after.profiles.length < Math.max(20, before.profiles.length * 0.8)) {
+            throw new Error('Catalogue shrank unexpectedly; keep the published data until the source is reviewed.');
+          }
+          JS
+      - run: npm test -- --no-cache
+      - name: Publish data only
+        run: |
+          if git diff --quiet -- data/community-orders.json; then exit 0; fi
+          git config user.name 'Ivan Khramov'
+          git config user.email 'main@ikhramov.me'
+          git add data/community-orders.json
+          git commit -m 'Обновить автоматический каталог порядков'
+          git push origin HEAD:main

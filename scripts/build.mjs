@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
-// @connect только для AniList: API AnimeLib и страницы animego запрашиваются обычным fetch страницы
+// Внешние запросы только за метаданными AniList и собственным JSON-каталогом порядков.
 const header = `// ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
 // @name:en      Anime watch order (AnimeLib, AnimeGO)
@@ -25,6 +25,7 @@ const header = `// ==UserScript==
 // @grant        GM_deleteValue
 // @grant        GM_registerMenuCommand
 // @connect      graphql.anilist.co
+// @connect      raw.githubusercontent.com
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==

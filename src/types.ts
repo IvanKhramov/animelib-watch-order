@@ -1,3 +1,5 @@
+import type { OrderProfile } from './orderProfiles';
+
 export type MediaFormat =
   | 'TV'
   | 'TV_SHORT'
@@ -119,6 +121,8 @@ export interface OrderItem {
 export interface OrderResult {
   mode: 'anilist' | 'site-only';
   rootAlId?: number;
+  /** Автоматически найденный маршрут внешнего каталога, привязанный по точному ID. */
+  orderProfile?: OrderProfile;
   /** ключ, под которым хранится пользовательский порядок франшизы */
   franchiseKey: string;
   /** основная линия + дополнительное (в режиме «Всё») по порядку */

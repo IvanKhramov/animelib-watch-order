@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AniListClient } from '../src/anilistAdapter';
+import { CommunityOrdersClient } from '../src/communityOrders';
 import { Cache, memoryKV, UserState } from '../src/storage';
 import type { SiteAdapter } from '../src/sites/site';
 import type { SiteTitle } from '../src/types';
@@ -30,6 +31,23 @@ function setup(nodes = [media(1, 'Root', 2020)]) {
 }
 
 describe('поиск по каталогу', () => {
+  it('автоматически подхватывает внешний маршрут для франшизы вне ручного каталога', async () => {
+    const { deps } = setup([media(1, 'Root', 2020)]);
+    const remote = { version: 1, updatedAt: '2026-10-18T00:00:00Z', profiles: [{
+      id: 'community:test', title: 'Root', checkedAt: '2026-10-18', anchorIds: [1, 2],
+      recommended: { steps: [{ alId: 2 }, { alId: 1 }], note: 'Маршрут сообщества.',
+        sources: [{ label: 'r/anime', url: 'https://www.reddit.com/r/anime/wiki/watch_order/' }] },
+    }] };
+    const community = new CommunityOrdersClient(async () => ({ status: 200, text: JSON.stringify(remote) }));
+    const extra = vi.spyOn(deps.anilist, 'getByIds').mockResolvedValue([media(2, 'Earlier', 2010)]);
+    const result = await buildWatchOrder('current', { ...deps, community });
+    expect(extra).toHaveBeenCalledWith([2], deps.ctx.signal);
+    const selected = selectOrder(result, 'recommended');
+    expect(selected.items.map((i) => i.alId)).toEqual([2, 1]);
+    expect(selected.communityRoute).toBe(true);
+    expect(selected.verified).toBe(false);
+  });
+
   it('дополняет проверенный профиль по точным ID и кэширует пакет без выдуманных ссылок', async () => {
     const rootId = 9253;
     const { deps, current } = setup([media(rootId, 'Steins;Gate', 2011)]);

@@ -21,9 +21,14 @@ export interface ProfileRoute {
   steps: ProfileStep[];
   note: string;
   sources: OrderSource[];
+  origin?: 'community';
+  variantId?: string;
+  label?: string;
+  checkedAt?: string;
 }
 
 export interface OrderProfile {
+  origin?: 'community';
   id: string;
   title: string;
   /** Только страницы самой франшизы, без кроссоверов и чужих спин-оффов. */
@@ -31,6 +36,7 @@ export interface OrderProfile {
   checkedAt: string;
   recommended: ProfileRoute;
   chronological?: ProfileRoute;
+  chronologicalVariants?: ProfileRoute[];
   chronologyUnavailable?: string;
   limitations?: string[];
 }

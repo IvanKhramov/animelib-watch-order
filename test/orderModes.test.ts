@@ -77,7 +77,7 @@ describe('режимы порядка', () => {
   it('отсутствие профиля не выдаёт автоматическую сортировку за проверенную хронологию', () => {
     const a = selectOrder(result(), 'recommended', []);
     expect(a.verified).toBe(false);
-    expect(a.explanation).toContain('Автоматический');
+    expect(a.explanation).toContain('Автоматически');
     const b = selectOrder(result(), 'chronological', []);
     expect(b.available).toBe(false);
     expect(b.items).toEqual([]);
@@ -88,6 +88,50 @@ describe('режимы порядка', () => {
     const res = selectOrder(result(), 'chronological', [{ ...profile, chronological: undefined, chronologyUnavailable: 'Нужна карта эпизодов.' }]);
     expect(res.explanation).toBe('Нужна карта эпизодов.');
     expect(res.available).toBe(false);
+  });
+
+  it('общая рекомендация работает для любого ID и оставляет поздний приквел после оригинала', () => {
+    const raw = result();
+    raw.rootAlId = 999999;
+    raw.items = [item(20, 2020), item(10, 2010)];
+    const res = selectOrder(raw, 'recommended', []);
+    expect(res.available).toBe(true);
+    expect(res.items.map((i) => i.alId)).toEqual([10, 20]);
+    expect(res.verified).toBe(false);
+    expect(res.profile).toBeUndefined();
+  });
+
+  it('маршрут автокаталога применяется без ручного профиля и не помечается проверенным вручную', () => {
+    const res = selectOrder({ ...result(), orderProfile: { ...profile, origin: 'community' } }, 'recommended', []);
+    expect(res.items.map((i) => i.alId)).toEqual([1, 3, 2]);
+    expect(res.communityRoute).toBe(true);
+    expect(res.verified).toBe(false);
+    expect(res.explanation).toContain('Сведения источника');
+    expect(res.explanation).not.toContain('Проверено:');
+  });
+
+  it('профиль только с событийным маршрутом не подменяет общую рекомендацию', () => {
+    const partial = { ...profile, origin: 'community' as const, recommended: { ...profile.recommended, steps: [] } };
+    const res = selectOrder({ ...result(), orderProfile: partial }, 'recommended', []);
+    expect(res.items.map((i) => i.alId)).toEqual([2, 1]);
+    expect(res.communityRoute).toBe(false);
+    expect(res.verified).toBe(false);
+  });
+
+  it('разные источники хронологии имеют независимые порядки и ключи пользовательских правок', () => {
+    const first = { ...profile.chronological!, variantId: 'reddit', label: 'r/anime', origin: 'community' as const, checkedAt: '2026-10-17' };
+    const second = { ...first, variantId: 'shiki', label: 'Shikimori', checkedAt: '2020-06-26', steps: [...first.steps].reverse() };
+    const p = { ...profile, chronological: first, chronologicalVariants: [first, second] };
+    const a = selectOrder(result(), 'chronological', [p]);
+    const b = selectOrder(result(), 'chronological', [p], 'shiki');
+    expect(a.items.map((i) => i.alId)).toEqual([2, 1]);
+    expect(b.items.map((i) => i.alId)).toEqual([1, 2]);
+    expect(a.orderKey).not.toBe(b.orderKey);
+    expect(a.legacyOrderKeys).toContain('al:1:chronological');
+    expect(b.legacyOrderKeys).toEqual([]);
+    expect(b.explanation).toContain('2020-06-26');
+    expect(b.verified).toBe(false);
+    expect(b.communityRoute).toBe(true);
   });
 
   it('диапазоны одного сезона сохраняются отдельными строками с общей отметкой', () => {
