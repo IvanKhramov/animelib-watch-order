@@ -6,7 +6,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.6
+// @version      0.4.0
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @description:en Watch order block on AnimeLib and AnimeGO anime pages: main line, OVAs and specials, alternatives. Links stay on the same site.
 // @author       Ivan Khramov
@@ -435,7 +435,7 @@
 
   // src/storage.ts
   var SCHEMA = "v1";
-  var CACHE_SCHEMA = "v2";
+  var CACHE_SCHEMA = "v3";
   var HOUR = 36e5;
   var DAY = 24 * HOUR;
   var Cache = class {
@@ -1026,6 +1026,10 @@
     if (sameExactDate(al.startDate, site.date) && al.format === site.format) return "date";
     return void 0;
   }
+  function candidateRank(c) {
+    const dateRank = c.confidence === "name" ? (c.site.date?.year !== void 0 && c.site.date.year === c.al.startDate.year ? 2 : 0) + (sameExactDate(c.site.date, c.al.startDate) ? 1 : 0) : 0;
+    return RANK2[c.confidence] * 4 + dateRank;
+  }
   var RANK2 = { site: 4, id: 3, name: 2, date: 1 };
   function matchTitles(alNodes, pool, rejected = /* @__PURE__ */ new Set()) {
     const all = [];
@@ -1041,8 +1045,8 @@
       for (const c of all) {
         const k = key(c);
         const cur = m.get(k);
-        if (!cur || RANK2[c.confidence] > RANK2[cur[0].confidence]) m.set(k, [c]);
-        else if (RANK2[c.confidence] === RANK2[cur[0].confidence]) cur.push(c);
+        if (!cur || candidateRank(c) > candidateRank(cur[0])) m.set(k, [c]);
+        else if (candidateRank(c) === candidateRank(cur[0])) cur.push(c);
       }
       return m;
     };
@@ -1063,6 +1067,52 @@
     const hits = [...m.entries()].filter(([, v]) => v.confidence !== "date");
     if (hits.length !== 1) return void 0;
     return results.find((r) => r.id === hits[0][0]);
+  }
+  function partName(name) {
+    const m = normalizeTitle(name).match(/^(.+?)\s+(?:(?:part|часть)\s+)?(\d+)$/);
+    return m && m[1].length >= 6 ? { base: m[1], number: Number(m[2]) } : void 0;
+  }
+  function nextPart(primary, title, al) {
+    for (const name of primary.names) {
+      const a = partName(name);
+      if (!a) continue;
+      if (![...alNames(al)].some((n) => partName(n)?.base === a.base)) continue;
+      if (title.names.some((n) => {
+        const b = partName(n);
+        return b?.base === a.base && b.number === a.number + 1;
+      })) return true;
+    }
+    return false;
+  }
+  function matchParts(nodes, matches, pool, rejected = /* @__PURE__ */ new Set()) {
+    const used = new Set([...matches.values()].map((m) => m.title.key));
+    const proposals = /* @__PURE__ */ new Map();
+    const bundled = /* @__PURE__ */ new Set([
+      "13329--rezero-kara-hajimeru-isekai-seikatsu-memory-snow-anime",
+      "14685--rezero-kara-hajimeru-isekai-seikatsu-hyouketsu-no-kizuna-anime"
+    ]);
+    for (const al of nodes) {
+      const primary = matches.get(al.id)?.title;
+      if (!primary) continue;
+      for (const title of pool) {
+        if (used.has(title.key) || rejected.has(pairKey(al.id, title.key)) || title.anilistId !== void 0 && title.anilistId !== al.id || !primary.format || primary.format === "UNKNOWN" || title.format !== primary.format || !primary.date?.year || !title.date?.year || !yearsCompatible(primary.date, title.date) || !yearsCompatible(al.startDate, title.date)) continue;
+        const bundle = al.id === 100049 && bundled.has(primary.key) && bundled.has(title.key);
+        if (!bundle && !nextPart(primary, title, al)) continue;
+        const list = proposals.get(title.key) ?? [];
+        list.push({ id: al.id, match: { title, confidence: title.anilistId === al.id ? "id" : "name" } });
+        proposals.set(title.key, list);
+      }
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const proposalsForTitle of proposals.values()) {
+      if (proposalsForTitle.length !== 1) continue;
+      const { id, match } = proposalsForTitle[0];
+      const list = out.get(id) ?? [];
+      list.push(match);
+      out.set(id, list);
+    }
+    for (const [id, titles] of out) if (titles.length !== 1) out.delete(id);
+    return out;
   }
 
   // src/ui.ts
@@ -1211,7 +1261,7 @@ summary{cursor:pointer;color:var(--muted)}
       const hidden = new Set(custom?.hidden ?? []);
       const all = keys.map((k) => byKey.get(k));
       const showAll = prefs.view === "all" || res.mode !== "anilist";
-      const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === "main" || i.isCurrent));
+      const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === "main" || i.isCurrent && i.kind !== "recap"));
       return { keys, all, visible, hiddenItems: all.filter((i) => hidden.has(i.watchKey)), custom };
     }
     render() {
@@ -1319,9 +1369,10 @@ summary{cursor:pointer;color:var(--muted)}
     }
     summary(res) {
       const { visible } = this.arranged(res);
-      const main = visible.filter((i) => i.kind === "main");
+      const main = visible.filter((i) => i.kind === "main" && !i.continuation);
       const watched = main.filter((i) => this.user.isWatched(i.watchKey)).length;
-      const pos = main.findIndex((i) => i.isCurrent);
+      const current = visible.find((i) => i.isCurrent);
+      const pos = main.findIndex((i) => i.isCurrent || current?.continuation && i.alId === current.alId);
       const parts = [];
       if (pos >= 0 && res.mode === "anilist") parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
       if (watched > 0) parts.push(`просмотрено ${watched} из ${main.length}`);
@@ -1344,7 +1395,7 @@ summary{cursor:pointer;color:var(--muted)}
         const visibleKeys = new Set(visible.map((i) => i.watchKey));
         let n = 0;
         for (const it of visible) {
-          const index = res.mode === "anilist" && it.kind === "main" ? ++n : void 0;
+          const index = res.mode === "anilist" && it.kind === "main" && !it.continuation ? ++n : void 0;
           list.append(this.row(it, index, { keys, visibleKeys, franchise: res.franchiseKey, hidden: custom?.hidden ?? [] }));
         }
         out.push(list);
@@ -1675,9 +1726,10 @@ summary{cursor:pointer;color:var(--muted)}
     SUMMARY: "recap",
     COMPILATION: "recap"
   };
+  var RECAP_IDS = /* @__PURE__ */ new Set([11977, 11979]);
   var RECAP_RE = /\brecap\b|soushuu|総集編|\bcompilation\b|\bdigest\b/i;
   function isRecap(m) {
-    return [m.romaji, m.english, ...m.synonyms].some((t) => !!t && RECAP_RE.test(t));
+    return RECAP_IDS.has(m.id) || [m.romaji, m.english, ...m.synonyms].some((t) => !!t && RECAP_RE.test(t));
   }
   function buildOrdering(g) {
     const adj = adjacency(g);
@@ -1685,10 +1737,17 @@ summary{cursor:pointer;color:var(--muted)}
     const root = g.nodes.get(g.rootId);
     if (!root) return { main: [], all: [], branches: [] };
     const isLine = (id) => (adj.get(id) ?? []).some((e) => e.rel === "PREQUEL" || e.rel === "SEQUEL");
+    const recaps = new Set([...g.nodes.values()].filter(isRecap).map((m) => m.id));
+    for (const m of g.nodes.values()) {
+      for (const e of m.edges) {
+        if (e.type === "ANIME" && (e.rel === "SUMMARY" || e.rel === "COMPILATION") && g.nodes.has(e.id)) recaps.add(e.id);
+      }
+    }
     let seed = g.rootId;
-    if (!isLine(seed)) {
-      const parent = (adj.get(seed) ?? []).find((e) => e.rel === "PARENT" && isLine(e.id));
-      if (parent) seed = parent.id;
+    if (recaps.has(seed) || !isLine(seed)) {
+      const parent = (adj.get(seed) ?? []).find((e) => e.rel === "PARENT" && !recaps.has(e.id) && isLine(e.id));
+      const original = parent ?? (recaps.has(seed) ? (adj.get(seed) ?? []).find((e) => e.rel === "ALTERNATIVE" && !recaps.has(e.id) && g.nodes.get(e.id).format === "TV" && isLine(e.id)) : void 0);
+      if (original) seed = original.id;
     }
     const mainSet = /* @__PURE__ */ new Set([seed]);
     const stack = [seed];
@@ -1701,22 +1760,63 @@ summary{cursor:pointer;color:var(--muted)}
         }
       }
     }
-    const mainIds = orderMain([...mainSet], g, adj, flags);
+    const lineLinks = (id) => new Set((adj.get(id) ?? []).filter((e) => mainSet.has(e.id) && !recaps.has(e.id) && (e.rel === "PREQUEL" || e.rel === "SEQUEL")).map((e) => e.id)).size;
+    const preferred = [...mainSet].filter((id) => !recaps.has(id)).sort((a, b) => lineLinks(b) - lineLinks(a) || Number(g.nodes.get(b).format === "TV") - Number(g.nodes.get(a).format === "TV") || (g.nodes.get(b).episodes ?? 0) - (g.nodes.get(a).episodes ?? 0) || byDate(g.nodes)(a, b));
+    const alternatives = /* @__PURE__ */ new Set();
+    const selected = /* @__PURE__ */ new Set();
+    for (const id of preferred) {
+      if ((adj.get(id) ?? []).some((e) => e.rel === "ALTERNATIVE" && selected.has(e.id))) alternatives.add(id);
+      else selected.add(id);
+    }
+    const removed = [...alternatives];
+    while (removed.length) {
+      for (const e of adj.get(removed.pop()) ?? []) {
+        if (e.rel !== "SEQUEL" || !mainSet.has(e.id) || alternatives.has(e.id)) continue;
+        const parents = (adj.get(e.id) ?? []).filter((p) => p.rel === "PREQUEL" && mainSet.has(p.id));
+        if (parents.every((p) => alternatives.has(p.id))) {
+          alternatives.add(e.id);
+          removed.push(e.id);
+        }
+      }
+    }
+    for (const id of alternatives) mainSet.delete(id);
+    let mainIds = orderMain([...mainSet], g, adj, flags);
+    const first = mainIds.find((id) => !recaps.has(id));
+    const prerequisites = first === void 0 ? [] : (adj.get(first) ?? []).filter((e) => e.rel === "ALTERNATIVE" && !mainSet.has(e.id) && !alternatives.has(e.id) && !recaps.has(e.id) && g.nodes.get(e.id).format === "TV" && dateKey(g.nodes.get(e.id).startDate) < dateKey(g.nodes.get(first).startDate)).map((e) => e.id);
+    if (prerequisites.length === 1) {
+      const before = /* @__PURE__ */ new Set();
+      const pending = [...prerequisites];
+      while (pending.length) {
+        const id = pending.pop();
+        if (before.has(id) || mainSet.has(id) || recaps.has(id)) continue;
+        before.add(id);
+        for (const e of adj.get(id) ?? []) if (e.rel === "PREQUEL") pending.push(e.id);
+      }
+      const ordered = orderMain([...before], g, adj, flags);
+      for (const id of ordered) {
+        mainSet.add(id);
+        alternatives.delete(id);
+        mark(flags, id, "предыстория по другой ветке");
+      }
+      mainIds = [...ordered, ...mainIds];
+    }
     const kind = /* @__PURE__ */ new Map();
-    for (const id of mainIds) kind.set(id, "main");
-    const queue = [...mainIds];
+    for (const id of mainIds) kind.set(id, recaps.has(id) ? "recap" : "main");
+    for (const id of alternatives) kind.set(id, "alternative");
+    const queue = [...mainIds, ...alternatives];
     while (queue.length > 0) {
       const id = queue.shift();
       const parentKind = kind.get(id);
       for (const e of adj.get(id) ?? []) {
         if (kind.has(e.id)) continue;
-        let k = KIND_BY_REL[e.rel] ?? (parentKind === "main" ? "extra" : parentKind);
+        let k = KIND_BY_REL[e.rel] ?? (parentKind === "main" || parentKind === "recap" ? "extra" : parentKind);
         if (parentKind === "alternative" || parentKind === "spinoff" || parentKind === "other") k = parentKind;
         kind.set(e.id, k);
         queue.push(e.id);
       }
     }
     for (const id of g.nodes.keys()) if (!kind.has(id)) kind.set(id, "other");
+    for (const id of recaps) kind.set(id, "recap");
     for (const [id, m] of g.nodes) if (!m.startDate.year) mark(flags, id, FLAG_NO_DATE);
     const node = (id, index) => ({
       id,
@@ -1724,7 +1824,6 @@ summary{cursor:pointer;color:var(--muted)}
       index,
       flags: flags.get(id) ?? []
     });
-    for (const id of mainIds) if (isRecap(g.nodes.get(id))) kind.set(id, "recap");
     let n = 0;
     const main = mainIds.map((id) => node(id, kind.get(id) === "main" ? ++n : void 0));
     const cmp = byDate(g.nodes);
@@ -1778,7 +1877,7 @@ summary{cursor:pointer;color:var(--muted)}
   }
   function baseName(s) {
     if (!s || !hasLatin(s)) return void 0;
-    const b = s.split(/[:：]/)[0].replace(/\s+(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*\d+|movie.*|ova|[ivx]+|\d+)$/i, "").trim();
+    const b = s.replace(/\s*\((?:tv|\d{4})\)/gi, "").split(/[:：](?=\s)/)[0].replace(/\s+(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*\d+|movie.*|ova|[ivx]+|\d+)$/i, "").trim();
     return b.length >= 3 ? b : void 0;
   }
   async function searchFranchise(queries, done, deps, max = 2) {
@@ -1787,11 +1886,11 @@ summary{cursor:pointer;color:var(--muted)}
     const out = [];
     let n = 0;
     for (const q of queries) {
-      if (!q || done.has(q.toLowerCase()) || n >= max) continue;
+      if (!q || done.has(q.toLowerCase()) || n >= max || done.size >= 12) continue;
       done.add(q.toLowerCase());
       n++;
       try {
-        out.push(...await adapter.search(q, ctx));
+        out.push(...await ctx.cache.wrap(`site-search:${adapter.id}`, q.toLowerCase(), 3 * DAY, () => adapter.search(q, ctx), ctx.force));
       } catch (e) {
         if (isAbort(e)) throw e;
       }
@@ -1811,28 +1910,24 @@ summary{cursor:pointer;color:var(--muted)}
       names: [.../* @__PURE__ */ new Set([...t.names, ...s.names])]
     };
   }
-  async function searchMissing(ids, g, matches, deps) {
-    const { adapter, ctx, user } = deps;
-    if (!adapter.search) return;
-    const search = adapter.search.bind(adapter);
-    const rejected = user.rejected();
-    const taken = new Set([...matches.values()].map((m) => m.title.key));
-    const run = limiter(2);
-    await Promise.all(
-      ids.slice(0, 10).map(
-        (id) => run(async () => {
+  function indexTitles(titles) {
+    const out = /* @__PURE__ */ new Map();
+    for (const title of titles) out.set(title.key, enrich(title, out));
+    return out;
+  }
+  async function searchMissing(groups, g, candidates, queried, rematch, deps) {
+    for (const [group, ids] of groups.entries()) {
+      const limit = group === 0 ? 9 : 12;
+      for (let alias = 0; alias < 4 && queried.size < limit; alias++) {
+        for (const id of ids) {
+          if (queried.size >= limit) break;
+          if (rematch().has(id)) continue;
           const al = g.nodes.get(id);
-          if (!al) return;
-          try {
-            const found = await search(al.romaji, ctx);
-            const m = matchTitles([al], found.filter((t) => !taken.has(t.key)), rejected).get(id);
-            if (m && m.confidence !== "date") matches.set(id, m);
-          } catch (e) {
-            if (isAbort(e)) throw e;
-          }
-        })
-      )
-    );
+          const q = [al.romaji, al.english, al.synonyms.find(hasLatin), baseName(al.romaji)][alias];
+          candidates.push(...await searchFranchise([q], queried, deps, 1));
+        }
+      }
+    }
   }
   function toItem(n, g, matches, adapter) {
     const al = g.nodes.get(n.id);
@@ -1864,7 +1959,7 @@ summary{cursor:pointer;color:var(--muted)}
       format: t.format ?? "UNKNOWN",
       formatLabel: t.formatLabel,
       date: t.date,
-      kind: "main",
+      kind: /обобщение|обзор|рекап/i.test(t.relationLabel ?? t.displayName) ? "recap" : "main",
       isCurrent,
       flags: isCurrent ? [] : [t.relationLabel ?? "связь"],
       match: { title: t, confidence: "site" },
@@ -1874,11 +1969,12 @@ summary{cursor:pointer;color:var(--muted)}
     const byDate2 = (a, b) => dateKey(a.date) - dateKey(b.date);
     const pre = related.filter((t) => t.relationKind === "prequel").sort(byDate2);
     const seq = related.filter((t) => t.relationKind === "sequel").sort(byDate2);
-    const rest = related.filter((t) => t.relationKind !== "prequel" && t.relationKind !== "sequel").sort(byDate2);
+    const story = related.filter((t) => t.relationKind === "story" && /предыстория|продолжение|развёрнутая история|изначальная история|обобщение/i.test(t.relationLabel ?? "")).sort(byDate2);
+    const rest = related.filter((t) => !pre.includes(t) && !seq.includes(t) && !story.includes(t)).sort(byDate2);
     return {
       mode: "site-only",
       franchiseKey: `site:${adapter.id}:${current.key}`,
-      items: [...pre.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
+      items: [...pre.map((t) => item(t, false)), ...story.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
       branches: rest.map((t) => ({ ...item(t, false), kind: "other" })),
       notes: [...notes, "Порядок собран только по связям сайта, без дат выхода: может быть неточным."]
     };
@@ -1898,7 +1994,7 @@ summary{cursor:pointer;color:var(--muted)}
     }
     const queried = /* @__PURE__ */ new Set();
     const searched = await searchFranchise(current.names.map(baseName), queried, deps);
-    current = enrich(current, new Map(searched.map((t) => [t.key, t])));
+    current = enrich(current, indexTitles(searched));
     let rootId;
     let g;
     try {
@@ -1918,17 +2014,44 @@ summary{cursor:pointer;color:var(--muted)}
     const first = g.nodes.get(ordering.main[0]?.id ?? rootId);
     const queries = [baseName(first.romaji), baseName(first.english), baseName(root.romaji), baseName(root.english)];
     searched.push(...await searchFranchise(queries, queried, deps));
-    const byKey = new Map(searched.map((t) => [t.key, t]));
+    const byKey = indexTitles(searched);
     const pool = [current, ...related.filter((t) => t.key !== current.key).map((t) => enrich(t, byKey))];
     const poolKeys = new Set(pool.map((t) => t.key));
     const candidates = [...pool, ...[...byKey.values()].filter((t) => !poolKeys.has(t.key))];
-    const matches = matchTitles(g.nodes.values(), candidates, user.rejected());
-    for (const [id, m] of matches) if (m.title.key === current.key && id !== rootId) matches.delete(id);
-    matches.set(rootId, { title: current, confidence: current.anilistId ? "id" : "name" });
-    const unmatched = ordering.all.map((n) => n.id).filter((id) => !matches.has(id));
-    await searchMissing(unmatched, g, matches, deps);
+    const rematch = () => {
+      const unique = indexTitles(candidates);
+      const matches2 = matchTitles(g.nodes.values(), [...unique.values()], user.rejected());
+      for (const [id, m] of matches2) if (m.confidence === "date" && !poolKeys.has(m.title.key)) matches2.delete(id);
+      for (const [id, m] of matches2) if (m.title.key === current.key && id !== rootId) matches2.delete(id);
+      matches2.set(rootId, { title: current, confidence: current.anilistId ? "id" : "name" });
+      return matches2;
+    };
+    const branchIds = [...ordering.branches].sort((a, b) => Number(a.kind === "other") - Number(b.kind === "other")).map((n) => n.id);
+    await searchMissing([ordering.all.map((n) => n.id), branchIds], g, candidates, queried, rematch, deps);
+    const matches = rematch();
+    const parts = matchParts(g.nodes.values(), matches, [...indexTitles(candidates).values()], user.rejected());
+    const expand = (n) => {
+      const primary = toItem(n, g, matches, adapter);
+      const titles = parts.get(n.id) ?? [];
+      const extra = titles.map((match) => ({
+        ...primary,
+        watchKey: `site:${adapter.id}:${match.title.key}`,
+        title: match.title.displayName,
+        subtitle: void 0,
+        date: match.title.date ?? primary.date,
+        index: void 0,
+        continuation: true,
+        isCurrent: match.title.key === current.key,
+        flags: [...primary.flags, "продолжение той же записи"],
+        match,
+        cover: match.title.cover ?? primary.cover,
+        coverLarge: match.title.cover ?? primary.coverLarge
+      }));
+      if (titles.length) primary.isCurrent = primary.match?.title.key === current.key;
+      return [primary, ...extra];
+    };
     if (ordering.main.length === 0) notes.push("Порядок не определён.");
-    const used = new Set([...matches.values()].map((m) => m.title.key));
+    const used = new Set([...matches.values(), ...[...parts.values()].flat()].map((m) => m.title.key));
     const orphans = pool.filter((t) => !used.has(t.key) && t.relationKind !== "other").map((t) => ({
       watchKey: `site:${adapter.id}:${t.key}`,
       title: t.displayName,
@@ -1946,8 +2069,8 @@ summary{cursor:pointer;color:var(--muted)}
       mode: "anilist",
       // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
       franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
-      items: ordering.all.map((n) => toItem(n, g, matches, adapter)),
-      branches: [...ordering.branches.map((n) => toItem(n, g, matches, adapter)), ...orphans],
+      items: ordering.all.flatMap(expand),
+      branches: [...ordering.branches.flatMap(expand), ...orphans],
       notes
     };
   }
