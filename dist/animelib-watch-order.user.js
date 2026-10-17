@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
 // @namespace    https://github.com/local/animelib-watch-order
-// @version      0.1.0
+// @version      0.1.1
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -1461,7 +1461,15 @@ a.awo-title:hover{text-decoration:underline}
       s.ctrl = new AbortController();
       const ctx = { signal: s.ctrl.signal, cache, force };
       s.view.set({ status: "loading" });
-      buildWatchOrder(s.key, { adapter, anilist, user, ctx }).then((result) => {
+      const timer = setTimeout(() => {
+        if (session !== s || ctx.signal.aborted) return;
+        s.ctrl.abort();
+        s.view.set({
+          status: "error",
+          message: "данные не пришли за 60 секунд. Проверьте, что менеджер скриптов разрешил доступ к graphql.anilist.co, и нажмите «Обновить»."
+        });
+      }, 6e4);
+      buildWatchOrder(s.key, { adapter, anilist, user, ctx }).finally(() => clearTimeout(timer)).then((result) => {
         if (session === s && !ctx.signal.aborted) s.view.set({ status: "ready", result });
       }).catch((e) => {
         if (isAbort(e) || session !== s) return;

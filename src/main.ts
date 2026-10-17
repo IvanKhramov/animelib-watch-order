@@ -27,7 +27,17 @@ function start(adapter: SiteAdapter) {
     s.ctrl = new AbortController();
     const ctx = { signal: s.ctrl.signal, cache, force };
     s.view.set({ status: 'loading' });
+    // без общего таймаута блок молча висит, например пока менеджер ждёт разрешения на @connect
+    const timer = setTimeout(() => {
+      if (session !== s || ctx.signal.aborted) return;
+      s.ctrl.abort();
+      s.view.set({
+        status: 'error',
+        message: 'данные не пришли за 60 секунд. Проверьте, что менеджер скриптов разрешил доступ к graphql.anilist.co, и нажмите «Обновить».',
+      });
+    }, 60_000);
     buildWatchOrder(s.key, { adapter, anilist, user, ctx })
+      .finally(() => clearTimeout(timer))
       .then((result) => {
         if (session === s && !ctx.signal.aborted) s.view.set({ status: 'ready', result });
       })
