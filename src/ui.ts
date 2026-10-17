@@ -70,11 +70,20 @@ summary{cursor:pointer;color:var(--muted)}
 .cover{all:unset;flex:none;width:40px;height:56px;border-radius:4px;overflow:hidden;cursor:zoom-in;background:var(--row-hi)}
 .cover img{width:100%;height:100%;object-fit:cover;display:block}
 .cover.empty{cursor:default}
-.zoom{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
-  background:rgba(0,0,0,.8);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none}
-.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
+`;
+
+// Просмотр обложки живёт в отдельном слое на <html>: внутри разметки сайта его перекрывали шапка и постер.
+const ZOOM_CSS = `
+:host{all:initial}
+.zoom{outline:none;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
+  background:rgba(8,8,10,.94);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none;
+  font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+.frame{width:min(760px,92vw);height:min(78vh,1000px);overflow:hidden;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;cursor:default}
+.frame img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
   transform-origin:center;user-select:none;will-change:transform}
-.zoom .cap{position:relative;z-index:1;color:#fff;font-size:14px;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
+.cap{position:relative;z-index:1;color:#fff;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
+.hint{position:relative;z-index:1;color:rgba(255,255,255,.55);font-size:12px}
 `;
 
 const KIND_LABEL: Record<ItemKind, string> = {
@@ -471,24 +480,48 @@ export class WatchOrderView {
   }
 
   /**
-   * Крупная обложка поверх страницы. Колесо приближает к курсору, приближённую картинку можно таскать,
-   * двойной клик сбрасывает масштаб. Закрытие: клик по пустому месту или Esc.
+   * Крупная обложка поверх всей страницы. Колесо приближает относительно центра картинки,
+   * приближённую картинку можно таскать, двойной клик сбрасывает масштаб.
+   * Картинка зумится внутри рамки, поле вокруг всегда свободно: клик по нему или Esc закрывает.
    */
   private zoom(it: OrderItem) {
+    // просмотр всегда один: пробел или Enter на кнопке обложки не должны открыть второй
+    for (const old of document.querySelectorAll('[data-awo-zoom]')) old.remove();
+    const host = document.createElement('div');
+    host.dataset.awoZoom = '1';
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = ZOOM_CSS;
+
     const img = h('img');
     img.src = it.coverLarge ?? it.cover ?? '';
     img.alt = it.title;
     img.referrerPolicy = 'no-referrer';
     img.draggable = false;
-    const layer = h('div', { class: 'zoom' }, img, h('div', { class: 'cap', text: it.title }));
+    const frame = h('div', { class: 'frame' }, img);
+    const layer = h(
+      'div',
+      { class: 'zoom' },
+      frame,
+      h('div', { class: 'cap', text: it.title }),
+      h('div', { class: 'hint', text: 'колесо: масштаб · перетаскивание: сдвиг · двойной клик: сброс · Esc или клик мимо: закрыть' }),
+    );
+    shadow.append(style, layer);
+
     let view: ZoomView = { scale: 1, x: 0, y: 0 };
     const apply = () => {
       img.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
       img.style.cursor = view.scale > 1 ? 'grab' : 'zoom-in';
     };
 
+    // прокрутка страницы на время просмотра выключена, в том числе с клавиатуры
+    const root = document.documentElement;
+    const prevOverflow = root.style.overflow;
+    root.style.overflow = 'hidden';
+
     const close = () => {
-      layer.remove();
+      host.remove();
+      root.style.overflow = prevOverflow;
       document.removeEventListener('keydown', onKey, true);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -500,30 +533,24 @@ export class WatchOrderView {
     layer.addEventListener(
       'wheel',
       (e) => {
-        // страница под слоем не листается
         e.preventDefault();
-        const r = img.getBoundingClientRect();
-        const center = { x: r.left + r.width / 2 - view.x, y: r.top + r.height / 2 - view.y };
-        view = zoomAt(view, Math.exp(-e.deltaY * 0.0015), { x: e.clientX - center.x, y: e.clientY - center.y });
+        // зум относительно текущего центра картинки: она остаётся на месте и растёт во все стороны
+        view = zoomAt(view, Math.exp(-e.deltaY * 0.0015), { x: view.x, y: view.y });
         apply();
       },
       { passive: false },
     );
 
-    // перетаскивание приближённой картинки
-    let drag: { px: number; py: number; x: number; y: number; moved: boolean } | undefined;
+    let drag: { px: number; py: number; x: number; y: number } | undefined;
     img.addEventListener('pointerdown', (e) => {
       if (view.scale <= 1) return;
-      drag = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
+      drag = { px: e.clientX, py: e.clientY, x: view.x, y: view.y };
       img.setPointerCapture(e.pointerId);
       img.style.cursor = 'grabbing';
     });
     img.addEventListener('pointermove', (e) => {
       if (!drag) return;
-      const dx = e.clientX - drag.px;
-      const dy = e.clientY - drag.py;
-      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-      view = { ...view, x: drag.x + dx, y: drag.y + dy };
+      view = { ...view, x: drag.x + e.clientX - drag.px, y: drag.y + e.clientY - drag.py };
       apply();
     });
     img.addEventListener('pointerup', () => {
@@ -535,13 +562,16 @@ export class WatchOrderView {
       apply();
     });
 
-    // закрывает только клик мимо картинки
+    // закрывает клик по полю вокруг рамки; клик по картинке и внутри рамки не закрывает
     layer.addEventListener('click', (e) => {
-      if (e.target !== img) close();
+      if (!e.composedPath().includes(frame)) close();
     });
     document.addEventListener('keydown', onKey, true);
     apply();
-    this.box.append(layer);
+    // на <html>, а не в разметку сайта: иначе слой оказывается под шапкой и постером
+    document.documentElement.append(host);
+    layer.tabIndex = -1;
+    layer.focus({ preventScroll: true });
   }
 
   private exportFile() {

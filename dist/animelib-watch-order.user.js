@@ -5,7 +5,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.1
+// @version      0.3.2
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -1057,11 +1057,18 @@ summary{cursor:pointer;color:var(--muted)}
 .cover{all:unset;flex:none;width:40px;height:56px;border-radius:4px;overflow:hidden;cursor:zoom-in;background:var(--row-hi)}
 .cover img{width:100%;height:100%;object-fit:cover;display:block}
 .cover.empty{cursor:default}
-.zoom{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
-  background:rgba(0,0,0,.8);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none}
-.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
+`;
+  var ZOOM_CSS = `
+:host{all:initial}
+.zoom{outline:none;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
+  background:rgba(8,8,10,.94);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none;
+  font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+.frame{width:min(760px,92vw);height:min(78vh,1000px);overflow:hidden;border-radius:10px;display:flex;align-items:center;
+  justify-content:center;cursor:default}
+.frame img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
   transform-origin:center;user-select:none;will-change:transform}
-.zoom .cap{position:relative;z-index:1;color:#fff;font-size:14px;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
+.cap{position:relative;z-index:1;color:#fff;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
+.hint{position:relative;z-index:1;color:rgba(255,255,255,.55);font-size:12px}
 `;
   var KIND_LABEL = {
     main: "",
@@ -1410,23 +1417,42 @@ summary{cursor:pointer;color:var(--muted)}
       return h("button", { class: "cover", title: "Увеличить", onClick: () => this.zoom(it) }, img);
     }
     /**
-     * Крупная обложка поверх страницы. Колесо приближает к курсору, приближённую картинку можно таскать,
-     * двойной клик сбрасывает масштаб. Закрытие: клик по пустому месту или Esc.
+     * Крупная обложка поверх всей страницы. Колесо приближает относительно центра картинки,
+     * приближённую картинку можно таскать, двойной клик сбрасывает масштаб.
+     * Картинка зумится внутри рамки, поле вокруг всегда свободно: клик по нему или Esc закрывает.
      */
     zoom(it) {
+      for (const old of document.querySelectorAll("[data-awo-zoom]")) old.remove();
+      const host2 = document.createElement("div");
+      host2.dataset.awoZoom = "1";
+      const shadow = host2.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = ZOOM_CSS;
       const img = h("img");
       img.src = it.coverLarge ?? it.cover ?? "";
       img.alt = it.title;
       img.referrerPolicy = "no-referrer";
       img.draggable = false;
-      const layer = h("div", { class: "zoom" }, img, h("div", { class: "cap", text: it.title }));
+      const frame = h("div", { class: "frame" }, img);
+      const layer = h(
+        "div",
+        { class: "zoom" },
+        frame,
+        h("div", { class: "cap", text: it.title }),
+        h("div", { class: "hint", text: "колесо: масштаб · перетаскивание: сдвиг · двойной клик: сброс · Esc или клик мимо: закрыть" })
+      );
+      shadow.append(style, layer);
       let view = { scale: 1, x: 0, y: 0 };
       const apply = () => {
         img.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
         img.style.cursor = view.scale > 1 ? "grab" : "zoom-in";
       };
+      const root = document.documentElement;
+      const prevOverflow = root.style.overflow;
+      root.style.overflow = "hidden";
       const close = () => {
-        layer.remove();
+        host2.remove();
+        root.style.overflow = prevOverflow;
         document.removeEventListener("keydown", onKey, true);
       };
       const onKey = (e) => {
@@ -1438,9 +1464,7 @@ summary{cursor:pointer;color:var(--muted)}
         "wheel",
         (e) => {
           e.preventDefault();
-          const r = img.getBoundingClientRect();
-          const center = { x: r.left + r.width / 2 - view.x, y: r.top + r.height / 2 - view.y };
-          view = zoomAt(view, Math.exp(-e.deltaY * 15e-4), { x: e.clientX - center.x, y: e.clientY - center.y });
+          view = zoomAt(view, Math.exp(-e.deltaY * 15e-4), { x: view.x, y: view.y });
           apply();
         },
         { passive: false }
@@ -1448,16 +1472,13 @@ summary{cursor:pointer;color:var(--muted)}
       let drag;
       img.addEventListener("pointerdown", (e) => {
         if (view.scale <= 1) return;
-        drag = { px: e.clientX, py: e.clientY, x: view.x, y: view.y, moved: false };
+        drag = { px: e.clientX, py: e.clientY, x: view.x, y: view.y };
         img.setPointerCapture(e.pointerId);
         img.style.cursor = "grabbing";
       });
       img.addEventListener("pointermove", (e) => {
         if (!drag) return;
-        const dx = e.clientX - drag.px;
-        const dy = e.clientY - drag.py;
-        if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
-        view = { ...view, x: drag.x + dx, y: drag.y + dy };
+        view = { ...view, x: drag.x + e.clientX - drag.px, y: drag.y + e.clientY - drag.py };
         apply();
       });
       img.addEventListener("pointerup", () => {
@@ -1469,11 +1490,13 @@ summary{cursor:pointer;color:var(--muted)}
         apply();
       });
       layer.addEventListener("click", (e) => {
-        if (e.target !== img) close();
+        if (!e.composedPath().includes(frame)) close();
       });
       document.addEventListener("keydown", onKey, true);
       apply();
-      this.box.append(layer);
+      document.documentElement.append(host2);
+      layer.tabIndex = -1;
+      layer.focus({ preventScroll: true });
     }
     exportFile() {
       const blob = new Blob([JSON.stringify(this.user.exportData(), null, 1)], { type: "application/json" });
