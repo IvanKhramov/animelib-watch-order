@@ -6,6 +6,7 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 // @connect только для AniList: API AnimeLib и страницы animego запрашиваются обычным fetch страницы
 const header = `// ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
+// @name:en      Anime watch order (AnimeLib, AnimeGO)
 // @namespace    https://github.com/IvanKhramov/animelib-watch-order
 // @homepageURL  https://github.com/IvanKhramov/animelib-watch-order
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
@@ -13,6 +14,9 @@ const header = `// ==UserScript==
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @version      ${pkg.version}
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
+// @description:en Watch order block on AnimeLib and AnimeGO anime pages: main line, OVAs and specials, alternatives. Links stay on the same site.
+// @author       Ivan Khramov
+// @license      MIT
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
 // @match        https://animego.org/*

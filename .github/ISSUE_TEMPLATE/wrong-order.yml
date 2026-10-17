@@ -1,0 +1,32 @@
+name: Неправильный порядок или ссылка
+description: Порядок просмотра неверный, часть не нашлась или ссылка ведёт не туда
+labels: [order]
+body:
+  - type: input
+    id: url
+    attributes:
+      label: Страница тайтла
+      description: Ссылка на animelib.org или animego.me, где видна проблема
+      placeholder: https://animelib.org/ru/anime/...
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Что показывает блок
+      description: Скриншот блока или список частей как есть
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Как должно быть
+      description: Какой порядок правильный, что лишнее или чего не хватает. Если есть источник (вики, AniList), приложите ссылку.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Версия скрипта
+      description: Видна в Tampermonkey/Violentmonkey рядом с названием
+      placeholder: 0.3.3
