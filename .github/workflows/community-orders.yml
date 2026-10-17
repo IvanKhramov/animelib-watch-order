@@ -8,6 +8,8 @@ on:
       - 'scripts/import-community-orders.mjs'
       - 'scripts/import-shikimori-orders.mjs'
       - 'scripts/update-community-orders.mjs'
+      - 'test/communityOrders.test.ts'
+      - 'test/watchOrder.test.ts'
   schedule:
     - cron: '23 7 * * *'
   workflow_dispatch:

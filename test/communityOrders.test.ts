@@ -5,8 +5,9 @@ import { Cache, DAY, memoryKV } from '../src/storage';
 import snapshot from '../data/community-orders.json';
 
 function feed() {
-  return { version: 1, updatedAt: '2026-10-18T00:00:00Z', profiles: [{
-    id: 'community:fixture', title: 'Fixture', checkedAt: '2026-10-18', anchorIds: [123456], origin: 'community',
+  const updatedAt = new Date(Date.parse(snapshot.updatedAt) + DAY).toISOString();
+  return { version: 1, updatedAt, profiles: [{
+    id: 'community:fixture', title: 'Fixture', checkedAt: updatedAt.slice(0, 10), anchorIds: [123456], origin: 'community',
     recommended: { steps: [{ alId: 123456, title: 'First', episodes: '1–12' }], note: 'Порядок сообщества.',
       sources: [{ label: 'r/anime', url: 'https://www.reddit.com/r/anime/wiki/watch_order/' }] },
   }] };

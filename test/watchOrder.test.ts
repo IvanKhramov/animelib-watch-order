@@ -8,6 +8,7 @@ import { baseName, buildWatchOrder } from '../src/watchOrder';
 import { profileForId } from '../src/orderProfiles';
 import { selectOrder } from '../src/orderModes';
 import { graph, media } from './helpers';
+import snapshot from '../data/community-orders.json';
 
 const title = (key: string, name: string, anilistId?: number): SiteTitle => ({
   key, names: [name], displayName: name, url: `https://animelib.org/ru/anime/${key}`, anilistId,
@@ -33,7 +34,7 @@ function setup(nodes = [media(1, 'Root', 2020)]) {
 describe('поиск по каталогу', () => {
   it('автоматически подхватывает внешний маршрут для франшизы вне ручного каталога', async () => {
     const { deps } = setup([media(1, 'Root', 2020)]);
-    const remote = { version: 1, updatedAt: '2026-10-18T00:00:00Z', profiles: [{
+    const remote = { version: 1, updatedAt: new Date(Date.parse(snapshot.updatedAt) + 24 * 3_600_000).toISOString(), profiles: [{
       id: 'community:test', title: 'Root', checkedAt: '2026-10-18', anchorIds: [1, 2],
       recommended: { steps: [{ alId: 2 }, { alId: 1 }], note: 'Маршрут сообщества.',
         sources: [{ label: 'r/anime', url: 'https://www.reddit.com/r/anime/wiki/watch_order/' }] },
