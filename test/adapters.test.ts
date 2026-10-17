@@ -77,6 +77,12 @@ describe('AniList', () => {
     expect(parseMedia({ id: 1, type: 'ANIME', relations: { edges: [{ relationType: 'WAT', node: { id: 2, type: 'ANIME' } }] } })?.edges).toEqual([]);
   });
 
+  it('берёт обложку только по https', () => {
+    const base = { id: 1, type: 'ANIME', title: { romaji: 'X' } };
+    expect(parseMedia({ ...base, coverImage: { medium: 'https://s4.anilist.co/a.jpg' } })?.cover?.medium).toBe('https://s4.anilist.co/a.jpg');
+    expect(parseMedia({ ...base, coverImage: { medium: 'javascript:alert(1)' } })?.cover).toBeUndefined();
+  });
+
   it('обход графа не зацикливается и соблюдает лимит узлов', async () => {
     // кольцо из 200 тайтлов: каждый сиквел следующего
     const transport: Transport = async (req: HttpRequest) => {

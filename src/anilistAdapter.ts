@@ -9,6 +9,7 @@ const MEDIA_FIELDS = `
   startDate { year month day }
   title { romaji english native }
   synonyms
+  coverImage { medium large extraLarge }
   relations { edges { relationType(version: 2) node { id type format } } }
 `;
 
@@ -25,6 +26,12 @@ const RELATIONS: ReadonlySet<string> = new Set([
   'PREQUEL', 'SEQUEL', 'SIDE_STORY', 'PARENT', 'SUMMARY', 'ALTERNATIVE', 'SPIN_OFF',
   'OTHER', 'COMPILATION', 'CONTAINS', 'CHARACTER', 'ADAPTATION', 'SOURCE',
 ]);
+
+/** Только https-ссылки: в img не должно попасть что-то вроде javascript: */
+const httpsUrl = (v: unknown): string | undefined => {
+  const s = str(v);
+  return s && /^https:\/\//.test(s) ? s : undefined;
+};
 
 const toFormat = (v: unknown): MediaFormat =>
   typeof v === 'string' && FORMATS.has(v) ? (v as MediaFormat) : 'UNKNOWN';
@@ -55,6 +62,12 @@ export function parseMedia(v: unknown): AlMedia | undefined {
     native: str(title.native),
     synonyms: strings(v.synonyms),
     episodes: num(v.episodes),
+    cover: httpsUrl(obj(v.coverImage).medium) || httpsUrl(obj(v.coverImage).large)
+      ? {
+          medium: httpsUrl(obj(v.coverImage).medium),
+          large: httpsUrl(obj(v.coverImage).extraLarge) ?? httpsUrl(obj(v.coverImage).large),
+        }
+      : undefined,
     edges,
   };
 }

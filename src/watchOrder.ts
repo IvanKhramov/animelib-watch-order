@@ -88,6 +88,7 @@ function enrich(t: SiteTitle, byKey: Map<string, SiteTitle>): SiteTitle {
     date: t.date ?? s.date,
     format: t.format ?? s.format,
     formatLabel: t.formatLabel ?? s.formatLabel,
+    cover: t.cover ?? s.cover,
     names: [...new Set([...t.names, ...s.names])],
   };
 }
@@ -135,6 +136,8 @@ function toItem(n: OrderedNode, g: FranchiseGraph, matches: Map<number, SiteMatc
     flags: [...n.flags],
     match,
     searchUrl: match ? undefined : adapter.searchUrl(al.romaji),
+    cover: al.cover?.medium ?? match?.title.cover,
+    coverLarge: al.cover?.large ?? al.cover?.medium ?? match?.title.cover,
   };
 }
 
@@ -151,6 +154,8 @@ function siteOnly(current: SiteTitle, related: SiteTitle[], adapter: SiteAdapter
     isCurrent,
     flags: isCurrent ? [] : [t.relationLabel ?? 'связь'],
     match: { title: t, confidence: 'site' },
+    cover: t.cover,
+    coverLarge: t.cover,
   });
   const byDate = (a: SiteTitle, b: SiteTitle) => dateKey(a.date) - dateKey(b.date);
   const pre = related.filter((t) => t.relationKind === 'prequel').sort(byDate);
@@ -231,6 +236,8 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
       isCurrent: false,
       flags: ['не сопоставлено с AniList'],
       match: { title: t, confidence: 'site' },
+      cover: t.cover,
+      coverLarge: t.cover,
     }));
 
   return {

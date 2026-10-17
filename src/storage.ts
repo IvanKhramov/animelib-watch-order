@@ -7,8 +7,10 @@ export interface KV {
   remove(key: string): void;
 }
 
-/** Версия схемы кэша: при смене формата данных старые записи просто перестают читаться. */
+/** Версия пользовательских данных (отметки, порядок, настройки). Менять только с миграцией. */
 export const SCHEMA = 'v1';
+/** Версия кэша: при смене формата данных старые записи просто перестают читаться. */
+export const CACHE_SCHEMA = 'v2';
 
 export function memoryKV(): KV {
   const m = new Map<string, unknown>();
@@ -34,7 +36,7 @@ export class Cache {
   ) {}
 
   private key(ns: string, k: string) {
-    return `cache:${SCHEMA}:${ns}:${k}`;
+    return `cache:${CACHE_SCHEMA}:${ns}:${k}`;
   }
 
   get<T>(ns: string, k: string): T | undefined {
@@ -148,11 +150,13 @@ export interface Prefs {
   view: 'main' | 'all';
   collapsed: boolean;
   branchesOpen: boolean;
+  /** показывать обложки частей */
+  covers: boolean;
   /** сайты, где блок скрыт целиком (вернуть через меню менеджера скриптов) */
   hiddenSites: Record<string, true>;
 }
 
-const DEFAULT_PREFS: Prefs = { view: 'all', collapsed: false, branchesOpen: false, hiddenSites: {} };
+const DEFAULT_PREFS: Prefs = { view: 'all', collapsed: false, branchesOpen: false, covers: false, hiddenSites: {} };
 
 const USER_KEYS = ['watched', 'rejected', 'prefs', 'orders'] as const;
 const EXPORT_FORMAT = 'animelib-watch-order/v1';

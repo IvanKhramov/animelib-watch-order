@@ -5,7 +5,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.2.1
+// @version      0.3.0
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -155,6 +155,7 @@
   startDate { year month day }
   title { romaji english native }
   synonyms
+  coverImage { medium large extraLarge }
   relations { edges { relationType(version: 2) node { id type format } } }
 `;
   var BY_IDS = `query ($ids: [Int]) {
@@ -179,6 +180,10 @@
     "ADAPTATION",
     "SOURCE"
   ]);
+  var httpsUrl = (v) => {
+    const s = str(v);
+    return s && /^https:\/\//.test(s) ? s : void 0;
+  };
   var toFormat = (v) => typeof v === "string" && FORMATS.has(v) ? v : "UNKNOWN";
   function parseMedia(v) {
     if (!isObj(v)) return void 0;
@@ -205,6 +210,10 @@
       native: str(title.native),
       synonyms: strings(v.synonyms),
       episodes: num(v.episodes),
+      cover: httpsUrl(obj(v.coverImage).medium) || httpsUrl(obj(v.coverImage).large) ? {
+        medium: httpsUrl(obj(v.coverImage).medium),
+        large: httpsUrl(obj(v.coverImage).extraLarge) ?? httpsUrl(obj(v.coverImage).large)
+      } : void 0,
       edges
     };
   }
@@ -403,6 +412,7 @@
 
   // src/storage.ts
   var SCHEMA = "v1";
+  var CACHE_SCHEMA = "v2";
   var HOUR = 36e5;
   var DAY = 24 * HOUR;
   var Cache = class {
@@ -411,7 +421,7 @@
       this.now = now;
     }
     key(ns, k) {
-      return `cache:${SCHEMA}:${ns}:${k}`;
+      return `cache:${CACHE_SCHEMA}:${ns}:${k}`;
     }
     get(ns, k) {
       const e = this.kv.get(this.key(ns, k));
@@ -503,7 +513,7 @@
       }
     }
   };
-  var DEFAULT_PREFS = { view: "all", collapsed: false, branchesOpen: false, hiddenSites: {} };
+  var DEFAULT_PREFS = { view: "all", collapsed: false, branchesOpen: false, covers: false, hiddenSites: {} };
   var USER_KEYS = ["watched", "rejected", "prefs", "orders"];
   var EXPORT_FORMAT = "animelib-watch-order/v1";
 
@@ -577,6 +587,7 @@
       const info = item.querySelector(".seasons__info");
       const spans = [...info?.firstElementChild?.querySelectorAll("span") ?? []].map(ownText).filter((s) => s && s !== "/");
       const label = info && info.children.length > 1 ? ownText(info.lastElementChild) : "";
+      const img = item.querySelector("img")?.getAttribute("src") ?? void 0;
       const fl = spans[0];
       const year = Number(spans[1]);
       related.push({
@@ -588,7 +599,8 @@
         format: fl ? FORMAT_BY_LABEL[fl] ?? "UNKNOWN" : void 0,
         formatLabel: fl,
         relationLabel: label,
-        relationKind: relationKind(label)
+        relationKind: relationKind(label),
+        cover: img?.startsWith("https://") ? img : void 0
       });
     }
     return { title, related };
@@ -733,7 +745,8 @@
       date: parseIsoDate(str(v.releaseDate)) ?? parseRuDate(str(v.releaseDateString)),
       format: label ? FORMAT_BY_LABEL2[label] ?? "UNKNOWN" : void 0,
       formatLabel: label,
-      anilistId: num(v.anilist_id)
+      anilistId: num(v.anilist_id),
+      cover: [str(obj(v.cover).thumbnail), str(obj(v.cover).default)].find((u) => u?.startsWith("https://"))
     };
   }
   function parseRelations(body) {
@@ -992,7 +1005,7 @@
 
   // src/ui.ts
   var CSS = `
-:host{all:initial;display:block;margin:0 0 20px;color:var(--fg);
+:host{all:initial;display:block;margin:24px 0;color:var(--fg);
   font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 :host([data-theme=dark]){--fg:#e8e8ea;--muted:#a1a1aa;--row:rgba(255,255,255,.05);--row-hi:rgba(255,255,255,.12);
   --line:rgba(255,255,255,.16);--accent:#8b7cf6;--warn:#e3a33b;--panel:#232327;--shadow:rgba(0,0,0,.5)}
@@ -1041,6 +1054,13 @@ details{margin-top:10px}
 summary{cursor:pointer;color:var(--muted)}
 .note{margin-top:8px;font-size:12px;color:var(--muted)}
 .state{margin-top:10px;color:var(--muted)}
+.cover{all:unset;flex:none;width:40px;height:56px;border-radius:4px;overflow:hidden;cursor:zoom-in;background:var(--row-hi)}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+.cover.empty{cursor:default}
+.zoom{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  background:rgba(0,0,0,.75);cursor:zoom-out;padding:24px}
+.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.zoom div{color:#fff;font-size:14px;text-align:center;max-width:90vw}
 `;
   var KIND_LABEL = {
     main: "",
@@ -1162,6 +1182,17 @@ summary{cursor:pointer;color:var(--muted)}
         ctl.append(seg);
       }
       if (res) {
+        ctl.append(
+          h("button", {
+            class: "btn" + (prefs.covers ? " on" : ""),
+            text: "Обложки",
+            title: "Показать обложки частей",
+            onClick: () => {
+              this.user.setPrefs({ covers: !prefs.covers });
+              this.render();
+            }
+          })
+        );
         ctl.append(
           h("button", {
             class: "btn" + (this.editing ? " on" : ""),
@@ -1307,6 +1338,7 @@ summary{cursor:pointer;color:var(--muted)}
         })
       );
       li.append(h("span", { class: "num", text: index !== void 0 ? String(index) : "" }));
+      if (this.user.prefs().covers) li.append(this.cover(it));
       const url = it.match?.title.url;
       if (url && !it.isCurrent) {
         const a = h("a", { class: "title", text: it.title });
@@ -1360,6 +1392,33 @@ summary{cursor:pointer;color:var(--muted)}
         );
       }
       return li;
+    }
+    cover(it) {
+      if (!it.cover) return h("span", { class: "cover empty" });
+      const img = h("img");
+      img.src = it.cover;
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      return h("button", { class: "cover", title: "Увеличить", onClick: () => this.zoom(it) }, img);
+    }
+    /** Крупная обложка поверх страницы; закрывается кликом или Esc. */
+    zoom(it) {
+      const img = h("img");
+      img.src = it.coverLarge ?? it.cover ?? "";
+      img.alt = it.title;
+      img.referrerPolicy = "no-referrer";
+      const layer = h("div", { class: "zoom" }, img, h("div", { text: it.title }));
+      const close = () => {
+        layer.remove();
+        document.removeEventListener("keydown", onKey, true);
+      };
+      const onKey = (e) => {
+        if (e.key === "Escape") close();
+      };
+      layer.addEventListener("click", close);
+      document.addEventListener("keydown", onKey, true);
+      this.box.append(layer);
     }
     exportFile() {
       const blob = new Blob([JSON.stringify(this.user.exportData(), null, 1)], { type: "application/json" });
@@ -1609,6 +1668,7 @@ summary{cursor:pointer;color:var(--muted)}
       date: t.date ?? s.date,
       format: t.format ?? s.format,
       formatLabel: t.formatLabel ?? s.formatLabel,
+      cover: t.cover ?? s.cover,
       names: [.../* @__PURE__ */ new Set([...t.names, ...s.names])]
     };
   }
@@ -1652,7 +1712,9 @@ summary{cursor:pointer;color:var(--muted)}
       isCurrent: n.id === g.rootId,
       flags: [...n.flags],
       match,
-      searchUrl: match ? void 0 : adapter.searchUrl(al.romaji)
+      searchUrl: match ? void 0 : adapter.searchUrl(al.romaji),
+      cover: al.cover?.medium ?? match?.title.cover,
+      coverLarge: al.cover?.large ?? al.cover?.medium ?? match?.title.cover
     };
   }
   function siteOnly(current, related, adapter, notes) {
@@ -1666,7 +1728,9 @@ summary{cursor:pointer;color:var(--muted)}
       kind: "main",
       isCurrent,
       flags: isCurrent ? [] : [t.relationLabel ?? "связь"],
-      match: { title: t, confidence: "site" }
+      match: { title: t, confidence: "site" },
+      cover: t.cover,
+      coverLarge: t.cover
     });
     const byDate2 = (a, b) => dateKey(a.date) - dateKey(b.date);
     const pre = related.filter((t) => t.relationKind === "prequel").sort(byDate2);
@@ -1733,7 +1797,9 @@ summary{cursor:pointer;color:var(--muted)}
       kind: "other",
       isCurrent: false,
       flags: ["не сопоставлено с AniList"],
-      match: { title: t, confidence: "site" }
+      match: { title: t, confidence: "site" },
+      cover: t.cover,
+      coverLarge: t.cover
     }));
     return {
       mode: "anilist",

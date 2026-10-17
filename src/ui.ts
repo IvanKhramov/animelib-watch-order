@@ -18,7 +18,7 @@ export interface UiHandlers {
 
 // Блок живёт в Shadow DOM: стили сайта на него не влияют, вид одинаковый на всех сайтах.
 const CSS = `
-:host{all:initial;display:block;margin:0 0 20px;color:var(--fg);
+:host{all:initial;display:block;margin:24px 0;color:var(--fg);
   font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
 :host([data-theme=dark]){--fg:#e8e8ea;--muted:#a1a1aa;--row:rgba(255,255,255,.05);--row-hi:rgba(255,255,255,.12);
   --line:rgba(255,255,255,.16);--accent:#8b7cf6;--warn:#e3a33b;--panel:#232327;--shadow:rgba(0,0,0,.5)}
@@ -67,6 +67,13 @@ details{margin-top:10px}
 summary{cursor:pointer;color:var(--muted)}
 .note{margin-top:8px;font-size:12px;color:var(--muted)}
 .state{margin-top:10px;color:var(--muted)}
+.cover{all:unset;flex:none;width:40px;height:56px;border-radius:4px;overflow:hidden;cursor:zoom-in;background:var(--row-hi)}
+.cover img{width:100%;height:100%;object-fit:cover;display:block}
+.cover.empty{cursor:default}
+.zoom{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  background:rgba(0,0,0,.75);cursor:zoom-out;padding:24px}
+.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.zoom div{color:#fff;font-size:14px;text-align:center;max-width:90vw}
 `;
 
 const KIND_LABEL: Record<ItemKind, string> = {
@@ -210,6 +217,17 @@ export class WatchOrderView {
       ctl.append(seg);
     }
     if (res) {
+      ctl.append(
+        h('button', {
+          class: 'btn' + (prefs.covers ? ' on' : ''),
+          text: 'Обложки',
+          title: 'Показать обложки частей',
+          onClick: () => {
+            this.user.setPrefs({ covers: !prefs.covers });
+            this.render();
+          },
+        }),
+      );
       ctl.append(
         h('button', {
           class: 'btn' + (this.editing ? ' on' : ''),
@@ -364,6 +382,7 @@ export class WatchOrderView {
       }),
     );
     li.append(h('span', { class: 'num', text: index !== undefined ? String(index) : '' }));
+    if (this.user.prefs().covers) li.append(this.cover(it));
 
     const url = it.match?.title.url;
     if (url && !it.isCurrent) {
@@ -421,6 +440,35 @@ export class WatchOrderView {
       );
     }
     return li;
+  }
+
+  private cover(it: OrderItem): HTMLElement {
+    if (!it.cover) return h('span', { class: 'cover empty' });
+    const img = h('img');
+    img.src = it.cover;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.referrerPolicy = 'no-referrer';
+    return h('button', { class: 'cover', title: 'Увеличить', onClick: () => this.zoom(it) }, img);
+  }
+
+  /** Крупная обложка поверх страницы; закрывается кликом или Esc. */
+  private zoom(it: OrderItem) {
+    const img = h('img');
+    img.src = it.coverLarge ?? it.cover ?? '';
+    img.alt = it.title;
+    img.referrerPolicy = 'no-referrer';
+    const layer = h('div', { class: 'zoom' }, img, h('div', { text: it.title }));
+    const close = () => {
+      layer.remove();
+      document.removeEventListener('keydown', onKey, true);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    layer.addEventListener('click', close);
+    document.addEventListener('keydown', onKey, true);
+    this.box.append(layer);
   }
 
   private exportFile() {

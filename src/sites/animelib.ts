@@ -87,6 +87,7 @@ export function parseLibMedia(v: unknown): SiteTitle | undefined {
     format: label ? (FORMAT_BY_LABEL[label] ?? 'UNKNOWN') : undefined,
     formatLabel: label,
     anilistId: num(v.anilist_id),
+    cover: [str(obj(v.cover).thumbnail), str(obj(v.cover).default)].find((u) => u?.startsWith('https://')),
   };
 }
 

@@ -46,6 +46,7 @@ export interface AlMedia {
   native?: string;
   synonyms: string[];
   episodes?: number;
+  cover?: { medium?: string; large?: string };
   edges: AlEdge[];
 }
 
@@ -73,6 +74,8 @@ export interface SiteTitle {
   format?: MediaFormat;
   formatLabel?: string;
   anilistId?: number;
+  /** ссылка на обложку на сайте */
+  cover?: string;
   /** связь относительно текущей страницы, как её подписал сайт */
   relationLabel?: string;
   relationKind?: SiteRelationKind;
@@ -104,6 +107,8 @@ export interface OrderItem {
   flags: string[];
   match?: SiteMatch;
   searchUrl?: string;
+  cover?: string;
+  coverLarge?: string;
 }
 
 export interface OrderResult {

@@ -92,6 +92,7 @@ export function parseAnimegoPage(doc: Document, url: URL): ParsedPage {
     // <div class="seasons__info"><div><span>Тип</span><span>/</span><span>Год</span></div><div>Связь</div></div>
     const spans = [...(info?.firstElementChild?.querySelectorAll('span') ?? [])].map(ownText).filter((s) => s && s !== '/');
     const label = info && info.children.length > 1 ? ownText(info.lastElementChild) : '';
+    const img = item.querySelector('img')?.getAttribute('src') ?? undefined;
     const fl = spans[0];
     const year = Number(spans[1]);
     related.push({
@@ -104,6 +105,7 @@ export function parseAnimegoPage(doc: Document, url: URL): ParsedPage {
       formatLabel: fl,
       relationLabel: label,
       relationKind: relationKind(label),
+      cover: img?.startsWith('https://') ? img : undefined,
     });
   }
   return { title, related };
