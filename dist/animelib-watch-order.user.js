@@ -5,7 +5,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.2
+// @version      0.3.3
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -1063,12 +1063,12 @@ summary{cursor:pointer;color:var(--muted)}
 .zoom{outline:none;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
   background:rgba(8,8,10,.94);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none;
   font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-.frame{width:min(760px,92vw);height:min(78vh,1000px);overflow:hidden;border-radius:10px;display:flex;align-items:center;
-  justify-content:center;cursor:default}
-.frame img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
+.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
   transform-origin:center;user-select:none;will-change:transform}
-.cap{position:relative;z-index:1;color:#fff;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
-.hint{position:relative;z-index:1;color:rgba(255,255,255,.55);font-size:12px}
+.cap,.hint{position:fixed;left:0;right:0;z-index:1;margin:0 auto;max-width:90vw;text-align:center;pointer-events:none;
+  text-shadow:0 1px 3px #000,0 0 8px #000}
+.cap{bottom:38px;color:#fff}
+.hint{bottom:14px;color:rgba(255,255,255,.6);font-size:12px}
 `;
   var KIND_LABEL = {
     main: "",
@@ -1417,9 +1417,9 @@ summary{cursor:pointer;color:var(--muted)}
       return h("button", { class: "cover", title: "Увеличить", onClick: () => this.zoom(it) }, img);
     }
     /**
-     * Крупная обложка поверх всей страницы. Колесо приближает относительно центра картинки,
+     * Крупная обложка поверх всей страницы. Колесо приближает относительно центра экрана,
      * приближённую картинку можно таскать, двойной клик сбрасывает масштаб.
-     * Картинка зумится внутри рамки, поле вокруг всегда свободно: клик по нему или Esc закрывает.
+     * Закрытие: клик мимо картинки или Esc.
      */
     zoom(it) {
       for (const old of document.querySelectorAll("[data-awo-zoom]")) old.remove();
@@ -1433,11 +1433,10 @@ summary{cursor:pointer;color:var(--muted)}
       img.alt = it.title;
       img.referrerPolicy = "no-referrer";
       img.draggable = false;
-      const frame = h("div", { class: "frame" }, img);
       const layer = h(
         "div",
         { class: "zoom" },
-        frame,
+        img,
         h("div", { class: "cap", text: it.title }),
         h("div", { class: "hint", text: "колесо: масштаб · перетаскивание: сдвиг · двойной клик: сброс · Esc или клик мимо: закрыть" })
       );
@@ -1464,7 +1463,7 @@ summary{cursor:pointer;color:var(--muted)}
         "wheel",
         (e) => {
           e.preventDefault();
-          view = zoomAt(view, Math.exp(-e.deltaY * 15e-4), { x: view.x, y: view.y });
+          view = zoomAt(view, Math.exp(-e.deltaY * 15e-4), { x: 0, y: 0 });
           apply();
         },
         { passive: false }
@@ -1490,7 +1489,7 @@ summary{cursor:pointer;color:var(--muted)}
         apply();
       });
       layer.addEventListener("click", (e) => {
-        if (!e.composedPath().includes(frame)) close();
+        if (!e.composedPath().includes(img)) close();
       });
       document.addEventListener("keydown", onKey, true);
       apply();

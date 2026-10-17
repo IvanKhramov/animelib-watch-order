@@ -78,12 +78,12 @@ const ZOOM_CSS = `
 .zoom{outline:none;position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;
   background:rgba(8,8,10,.94);cursor:zoom-out;padding:24px;overflow:hidden;overscroll-behavior:contain;touch-action:none;
   font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-.frame{width:min(760px,92vw);height:min(78vh,1000px);overflow:hidden;border-radius:10px;display:flex;align-items:center;
-  justify-content:center;cursor:default}
-.frame img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
+.zoom img{width:min(420px,90vw);max-height:80vh;object-fit:contain;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);
   transform-origin:center;user-select:none;will-change:transform}
-.cap{position:relative;z-index:1;color:#fff;text-align:center;max-width:90vw;text-shadow:0 1px 3px #000}
-.hint{position:relative;z-index:1;color:rgba(255,255,255,.55);font-size:12px}
+.cap,.hint{position:fixed;left:0;right:0;z-index:1;margin:0 auto;max-width:90vw;text-align:center;pointer-events:none;
+  text-shadow:0 1px 3px #000,0 0 8px #000}
+.cap{bottom:38px;color:#fff}
+.hint{bottom:14px;color:rgba(255,255,255,.6);font-size:12px}
 `;
 
 const KIND_LABEL: Record<ItemKind, string> = {
@@ -480,9 +480,9 @@ export class WatchOrderView {
   }
 
   /**
-   * Крупная обложка поверх всей страницы. Колесо приближает относительно центра картинки,
+   * Крупная обложка поверх всей страницы. Колесо приближает относительно центра экрана,
    * приближённую картинку можно таскать, двойной клик сбрасывает масштаб.
-   * Картинка зумится внутри рамки, поле вокруг всегда свободно: клик по нему или Esc закрывает.
+   * Закрытие: клик мимо картинки или Esc.
    */
   private zoom(it: OrderItem) {
     // просмотр всегда один: пробел или Enter на кнопке обложки не должны открыть второй
@@ -498,11 +498,10 @@ export class WatchOrderView {
     img.alt = it.title;
     img.referrerPolicy = 'no-referrer';
     img.draggable = false;
-    const frame = h('div', { class: 'frame' }, img);
     const layer = h(
       'div',
       { class: 'zoom' },
-      frame,
+      img,
       h('div', { class: 'cap', text: it.title }),
       h('div', { class: 'hint', text: 'колесо: масштаб · перетаскивание: сдвиг · двойной клик: сброс · Esc или клик мимо: закрыть' }),
     );
@@ -534,8 +533,8 @@ export class WatchOrderView {
       'wheel',
       (e) => {
         e.preventDefault();
-        // зум относительно текущего центра картинки: она остаётся на месте и растёт во все стороны
-        view = zoomAt(view, Math.exp(-e.deltaY * 0.0015), { x: view.x, y: view.y });
+        // зум всегда относительно центра экрана, курсор не важен
+        view = zoomAt(view, Math.exp(-e.deltaY * 0.0015), { x: 0, y: 0 });
         apply();
       },
       { passive: false },
@@ -562,9 +561,9 @@ export class WatchOrderView {
       apply();
     });
 
-    // закрывает клик по полю вокруг рамки; клик по картинке и внутри рамки не закрывает
+    // закрывает клик мимо картинки
     layer.addEventListener('click', (e) => {
-      if (!e.composedPath().includes(frame)) close();
+      if (!e.composedPath().includes(img)) close();
     });
     document.addEventListener('keydown', onKey, true);
     apply();
