@@ -6,7 +6,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.5
+// @version      0.3.6
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @description:en Watch order block on AnimeLib and AnimeGO anime pages: main line, OVAs and specials, alternatives. Links stay on the same site.
 // @author       Ivan Khramov
@@ -90,22 +90,25 @@
     const base = opts.baseDelayMs ?? 800;
     const max = opts.maxDelayMs ?? 1e4;
     const maxRetryAfter = opts.maxRetryAfterMs ?? 12e4;
-    const interval = opts.minIntervalMs ?? 0;
+    const limit = opts.rateLimit;
+    const sentAt = [];
     const now = opts.now ?? Date.now;
     const wait = opts.sleep ?? sleep;
     let pausedUntil = 0;
-    let nextRequestAt = 0;
     return async (req) => {
       let attempt = 0;
       for (; ; ) {
         if (req.signal?.aborted) throw new AbortError();
         for (; ; ) {
           if (req.signal?.aborted) throw new AbortError();
-          const delay2 = Math.max(pausedUntil, nextRequestAt) - now();
+          const t = now();
+          if (limit) while (sentAt.length > 0 && sentAt[0] <= t - limit.windowMs) sentAt.shift();
+          const windowFree = limit && sentAt.length >= limit.max ? sentAt[0] + limit.windowMs : 0;
+          const delay2 = Math.max(pausedUntil, windowFree) - t;
           if (delay2 <= 0) break;
           await wait(delay2, req.signal);
         }
-        nextRequestAt = now() + interval;
+        if (limit) sentAt.push(now());
         let res;
         let err;
         try {
@@ -139,7 +142,8 @@
         headers: req.headers,
         body: req.body,
         credentials: "omit",
-        referrerPolicy: "no-referrer",
+        // referrerPolicy не трогаем: API AnimeLib без Referer отвечает 403.
+        // Этот транспорт ходит только на сам сайт, адрес страницы никуда наружу не уходит.
         signal: ctrl.signal
       });
       const ra = Number(r.headers.get("retry-after"));
@@ -1953,7 +1957,7 @@ summary{cursor:pointer;color:var(--muted)}
     const kv = gmKV();
     const cache = new Cache(kv);
     const user = new UserState(kv);
-    const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, minIntervalMs: 2500 }));
+    const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, rateLimit: { max: 25, windowMs: 6e4 } }));
     let session = null;
     const load = (s, force) => {
       if (hiddenHere()) return;

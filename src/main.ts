@@ -19,7 +19,7 @@ function start(adapter: SiteAdapter) {
   const kv = gmKV();
   const cache = new Cache(kv);
   const user = new UserState(kv);
-  const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, minIntervalMs: 2500 }));
+  const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, rateLimit: { max: 25, windowMs: 60_000 } }));
   let session: Session | null = null;
 
   const load = (s: Session, force: boolean) => {

@@ -74,18 +74,21 @@ describe('паузы транспорта', () => {
     expect(send).toHaveBeenCalledTimes(3);
   });
 
-  it('ограничивает параллельные запросы и повторы интервалом AniList', async () => {
+  it('лимит окна: всплеск проходит сразу, сверх лимита ждёт освобождения окна, повторы тоже считаются', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const sent: number[] = [];
     const t = withRetry(async () => {
       sent.push(Date.now());
       return { status: sent.length === 1 ? 503 : 200, text: '' };
-    }, { minIntervalMs: 2500, baseDelayMs: 1 });
+    }, { rateLimit: { max: 2, windowMs: 1000 }, baseDelayMs: 1 });
     const requests = Promise.all([t({ url: 'a' }), t({ url: 'b' }), t({ url: 'c' })]);
     await vi.runAllTimersAsync();
     await requests;
-    expect(sent).toEqual([0, 2500, 5000, 7500]);
+    // a и b сразу; повтор a и c ждут, пока окно освободится
+    expect(sent.slice(0, 2)).toEqual([0, 0]);
+    expect(sent.slice(2).every((x) => x >= 1000)).toBe(true);
+    expect(sent).toHaveLength(4);
   });
 
   it('не делит паузу между независимыми транспортами', async () => {
@@ -119,11 +122,10 @@ describe('паузы транспорта', () => {
   });
 });
 
-it('fetch не отправляет Referer и cookie', async () => {
+it('fetch не отправляет cookie и не отключает Referer (без него API AnimeLib отвечает 403)', async () => {
   const send = vi.fn(async () => new Response('{}', { status: 200 }));
   vi.stubGlobal('fetch', send);
   await fetchTransport({ url: 'https://api.cdnlibs.org/api/anime' });
-  expect(send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-    credentials: 'omit', referrerPolicy: 'no-referrer',
-  }));
+  expect(send).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ credentials: 'omit' }));
+  expect(send).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ referrerPolicy: 'no-referrer' }));
 });

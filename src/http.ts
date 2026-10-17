@@ -82,7 +82,8 @@ export interface RetryOptions {
   baseDelayMs?: number;
   maxDelayMs?: number;
   maxRetryAfterMs?: number;
-  minIntervalMs?: number;
+  /** не больше max запросов за windowMs: всплеск проходит сразу, ждём только при исчерпании */
+  rateLimit?: { max: number; windowMs: number };
   now?: () => number;
   sleep?: typeof sleep;
 }
@@ -93,11 +94,11 @@ export function withRetry(transport: Transport, opts: RetryOptions = {}): Transp
   const base = opts.baseDelayMs ?? 800;
   const max = opts.maxDelayMs ?? 10_000;
   const maxRetryAfter = opts.maxRetryAfterMs ?? 120_000;
-  const interval = opts.minIntervalMs ?? 0;
+  const limit = opts.rateLimit;
+  const sentAt: number[] = [];
   const now = opts.now ?? Date.now;
   const wait = opts.sleep ?? sleep;
   let pausedUntil = 0;
-  let nextRequestAt = 0;
   return async (req) => {
     let attempt = 0;
     for (;;) {
@@ -105,11 +106,14 @@ export function withRetry(transport: Transport, opts: RetryOptions = {}): Transp
       // После ожидания проверяем паузу снова: соседний запрос мог продлить её.
       for (;;) {
         if (req.signal?.aborted) throw new AbortError();
-        const delay = Math.max(pausedUntil, nextRequestAt) - now();
+        const t = now();
+        if (limit) while (sentAt.length > 0 && sentAt[0]! <= t - limit.windowMs) sentAt.shift();
+        const windowFree = limit && sentAt.length >= limit.max ? sentAt[0]! + limit.windowMs : 0;
+        const delay = Math.max(pausedUntil, windowFree) - t;
         if (delay <= 0) break;
         await wait(delay, req.signal);
       }
-      nextRequestAt = now() + interval;
+      if (limit) sentAt.push(now());
       let res: HttpResponse | undefined;
       let err: unknown;
       try {
@@ -147,7 +151,8 @@ export const fetchTransport: Transport = async (req) => {
       headers: req.headers,
       body: req.body,
       credentials: 'omit',
-      referrerPolicy: 'no-referrer',
+      // referrerPolicy не трогаем: API AnimeLib без Referer отвечает 403.
+      // Этот транспорт ходит только на сам сайт, адрес страницы никуда наружу не уходит.
       signal: ctrl.signal,
     });
     const ra = Number(r.headers.get('retry-after'));
