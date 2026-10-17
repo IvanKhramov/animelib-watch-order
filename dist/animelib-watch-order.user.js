@@ -1,7 +1,11 @@
 // ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
-// @namespace    https://github.com/local/animelib-watch-order
-// @version      0.2.0
+// @namespace    https://github.com/IvanKhramov/animelib-watch-order
+// @homepageURL  https://github.com/IvanKhramov/animelib-watch-order
+// @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
+// @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
+// @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
+// @version      0.2.1
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
