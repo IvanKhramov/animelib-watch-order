@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
 // @namespace    https://github.com/local/animelib-watch-order
-// @version      0.1.1
+// @version      0.1.2
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -935,7 +935,7 @@
 .awo-row.is-current{background:color-mix(in srgb,currentColor 13%,transparent)}
 .awo-row.is-current .awo-title{font-weight:600}
 .awo-row.is-side{margin-left:18px}
-.awo-mark{all:unset;cursor:pointer;width:1.2em;text-align:center;opacity:.8}
+.awo-mark{all:unset;cursor:pointer;width:1.2em;text-align:center;opacity:.8;font-variant-emoji:text}
 .awo-mark:hover{opacity:1}
 .awo-num{min-width:1.6em;opacity:.6;font-variant-numeric:tabular-nums}
 .awo-title{color:inherit;text-decoration:none;overflow-wrap:anywhere}
@@ -1049,7 +1049,7 @@ a.awo-title:hover{text-decoration:underline}
       if (it.isCurrent) li.classList.add("is-current");
       if (it.kind !== "main" && this.view === "all" && it.kind !== "other") li.classList.add("is-side");
       const watched = this.user.isWatched(it.watchKey);
-      const mark2 = el("button", "awo-mark", it.isCurrent ? "▶" : watched ? "✓" : it.kind === "main" ? "○" : "◇");
+      const mark2 = el("button", "awo-mark", it.isCurrent ? "▶︎" : watched ? "✓" : it.kind === "main" ? "○" : "◇");
       mark2.type = "button";
       mark2.title = watched ? "Снять отметку «просмотрено»" : "Отметить просмотренным";
       mark2.addEventListener("click", () => {
