@@ -1,4 +1,5 @@
 import type { CustomOrder } from './customOrder';
+import { isObj } from './guards';
 
 /** Хранилище ключ-значение. В userscript это GM_getValue/GM_setValue, в тестах Map. */
 export interface KV {
@@ -137,11 +138,16 @@ export class UserState {
     if (!raw || typeof raw !== 'object' || (raw as ExportData).format !== EXPORT_FORMAT) {
       throw new Error('это не файл экспорта порядка просмотра');
     }
+    const data = raw as ExportData;
     for (const name of USER_KEYS) {
-      const v = (raw as ExportData)[name];
+      const v = data[name];
+      if (v !== undefined && !validUserField(name, v)) throw new Error(`повреждено поле ${name}`);
+    }
+    // Применяем только после проверки всех полей, включая вложенные.
+    for (const name of USER_KEYS) {
+      const v = data[name];
       if (v === undefined) this.kv.remove(`user:${SCHEMA}:${name}`);
-      else if (typeof v === 'object' && v !== null && !Array.isArray(v)) this.kv.set(`user:${SCHEMA}:${name}`, v);
-      else throw new Error(`повреждено поле ${name}`);
+      else this.kv.set(`user:${SCHEMA}:${name}`, v);
     }
   }
 }
@@ -162,3 +168,23 @@ const USER_KEYS = ['watched', 'rejected', 'prefs', 'orders'] as const;
 const EXPORT_FORMAT = 'animelib-watch-order/v1';
 
 export type ExportData = { format: string; exportedAt: string } & Partial<Record<(typeof USER_KEYS)[number], unknown>>;
+
+const trueMap = (v: unknown): boolean => isObj(v) && Object.values(v).every((x) => x === true);
+const stringArray = (v: unknown): boolean => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+function validUserField(name: (typeof USER_KEYS)[number], v: unknown): boolean {
+  if (name === 'watched' || name === 'rejected') return trueMap(v);
+  if (!isObj(v)) return false;
+  if (name === 'orders') {
+    return Object.values(v).every((order) => isObj(order) &&
+      Object.keys(order).every((key) => key === 'order' || key === 'hidden') &&
+      stringArray(order.order) && stringArray(order.hidden));
+  }
+  // Старые экспорты могут содержать только часть настроек.
+  return Object.entries(v).every(([key, value]) => {
+    if (key === 'view') return value === 'main' || value === 'all';
+    if (key === 'hiddenSites') return trueMap(value);
+    if (key === 'collapsed' || key === 'branchesOpen' || key === 'covers') return typeof value === 'boolean';
+    return false;
+  });
+}

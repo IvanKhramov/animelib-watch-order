@@ -63,6 +63,46 @@ describe('UserState', () => {
     expect(b.customOrder('al:1')?.hidden).toEqual(['al:3']);
   });
 
+  it.each([
+    { watched: { 'al:2': false } },
+    { rejected: { pair: 'true' } },
+    { prefs: { view: 'other' } },
+    { prefs: { collapsed: 'yes' } },
+    { prefs: { branchesOpen: 1 } },
+    { prefs: { covers: null } },
+    { prefs: { hiddenSites: { animelib: false } } },
+    { prefs: { hiddenSites: [] } },
+    { prefs: { unknown: true } },
+    { orders: { franchise: { order: ['al:2', 3], hidden: [] } } },
+    { orders: { franchise: { order: [], hidden: [null] } } },
+    { orders: { franchise: { order: [] } } },
+    { orders: { franchise: [] } },
+  ])('битое вложенное поле не меняет существующие данные: %j', (bad) => {
+    const u = new UserState(memoryKV());
+    u.setWatched('al:1', true);
+    u.reject('old-pair');
+    u.setPrefs({ view: 'main', hiddenSites: { animelib: true } });
+    u.setCustomOrder('al:1', { order: ['al:1'], hidden: ['al:9'] });
+    const before = u.exportData();
+    expect(() => u.importData({
+      format: before.format, watched: { 'al:2': true }, ...bad,
+    })).toThrow();
+    expect(u.exportData()).toEqual({ ...before, exportedAt: expect.any(String) });
+  });
+
+  it('отсутствующие разделы удаляются после полной проверки', () => {
+    const u = new UserState(memoryKV());
+    u.setWatched('al:1', true);
+    u.reject('pair');
+    u.setPrefs({ covers: true });
+    u.setCustomOrder('al:1', { order: ['al:1'], hidden: [] });
+    u.importData({ format: 'animelib-watch-order/v1', prefs: { view: 'main' } });
+    expect(u.isWatched('al:1')).toBe(false);
+    expect(u.rejected().size).toBe(0);
+    expect(u.prefs()).toMatchObject({ view: 'main', covers: false });
+    expect(u.customOrder('al:1')).toBeUndefined();
+  });
+
   it('отказывается импортировать чужой файл', () => {
     const u = new UserState(memoryKV());
     expect(() => u.importData({ hello: 1 })).toThrow();

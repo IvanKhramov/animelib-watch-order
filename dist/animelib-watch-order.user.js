@@ -6,14 +6,13 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.3.4
+// @version      0.3.5
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @description:en Watch order block on AnimeLib and AnimeGO anime pages: main line, OVAs and specials, alternatives. Links stay on the same site.
 // @author       Ivan Khramov
 // @license      MIT
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
-// @match        https://animego.org/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -86,31 +85,46 @@
       next();
     });
   }
-  function withRetry(transport2, opts = {}) {
+  function withRetry(transport, opts = {}) {
     const retries = opts.retries ?? 2;
     const base = opts.baseDelayMs ?? 800;
     const max = opts.maxDelayMs ?? 1e4;
+    const maxRetryAfter = opts.maxRetryAfterMs ?? 12e4;
+    const interval = opts.minIntervalMs ?? 0;
+    const now = opts.now ?? Date.now;
+    const wait = opts.sleep ?? sleep;
+    let pausedUntil = 0;
+    let nextRequestAt = 0;
     return async (req) => {
       let attempt = 0;
       for (; ; ) {
         if (req.signal?.aborted) throw new AbortError();
+        for (; ; ) {
+          if (req.signal?.aborted) throw new AbortError();
+          const delay2 = Math.max(pausedUntil, nextRequestAt) - now();
+          if (delay2 <= 0) break;
+          await wait(delay2, req.signal);
+        }
+        nextRequestAt = now() + interval;
         let res;
         let err;
         try {
-          res = await transport2(req);
+          res = await transport(req);
         } catch (e) {
           if (isAbort(e)) throw e;
           err = e;
         }
+        const hinted = res?.retryAfter !== void 0 && Number.isFinite(res.retryAfter) ? Math.max(0, res.retryAfter * 1e3) : 0;
+        const delay = Math.max(hinted, Math.min(max, base * 2 ** attempt));
+        if (res?.status === 429) pausedUntil = Math.max(pausedUntil, now() + delay);
+        if (res && hinted > maxRetryAfter) return res;
         const retriable = !res || res.status === 429 || res.status >= 500;
         if (!retriable || attempt >= retries) {
           if (res) return res;
           throw err;
         }
-        const hinted = res?.retryAfter !== void 0 ? res.retryAfter * 1e3 : 0;
-        const delay = Math.min(max, Math.max(hinted, base * 2 ** attempt));
         attempt++;
-        await sleep(delay, req.signal);
+        if (res?.status !== 429) await wait(delay, req.signal);
       }
     };
   }
@@ -125,6 +139,7 @@
         headers: req.headers,
         body: req.body,
         credentials: "omit",
+        referrerPolicy: "no-referrer",
         signal: ctrl.signal
       });
       const ra = Number(r.headers.get("retry-after"));
@@ -251,8 +266,8 @@
     return void 0;
   }
   var AniListClient = class {
-    constructor(transport2) {
-      this.transport = transport2;
+    constructor(transport) {
+      this.transport = transport;
     }
     async query(query, variables, signal) {
       const res = await this.transport({
@@ -509,17 +524,36 @@
       if (!raw || typeof raw !== "object" || raw.format !== EXPORT_FORMAT) {
         throw new Error("это не файл экспорта порядка просмотра");
       }
+      const data = raw;
       for (const name of USER_KEYS) {
-        const v = raw[name];
+        const v = data[name];
+        if (v !== void 0 && !validUserField(name, v)) throw new Error(`повреждено поле ${name}`);
+      }
+      for (const name of USER_KEYS) {
+        const v = data[name];
         if (v === void 0) this.kv.remove(`user:${SCHEMA}:${name}`);
-        else if (typeof v === "object" && v !== null && !Array.isArray(v)) this.kv.set(`user:${SCHEMA}:${name}`, v);
-        else throw new Error(`повреждено поле ${name}`);
+        else this.kv.set(`user:${SCHEMA}:${name}`, v);
       }
     }
   };
   var DEFAULT_PREFS = { view: "all", collapsed: false, branchesOpen: false, covers: false, hiddenSites: {} };
   var USER_KEYS = ["watched", "rejected", "prefs", "orders"];
   var EXPORT_FORMAT = "animelib-watch-order/v1";
+  var trueMap = (v) => isObj(v) && Object.values(v).every((x) => x === true);
+  var stringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  function validUserField(name, v) {
+    if (name === "watched" || name === "rejected") return trueMap(v);
+    if (!isObj(v)) return false;
+    if (name === "orders") {
+      return Object.values(v).every((order) => isObj(order) && Object.keys(order).every((key) => key === "order" || key === "hidden") && stringArray(order.order) && stringArray(order.hidden));
+    }
+    return Object.entries(v).every(([key, value]) => {
+      if (key === "view") return value === "main" || value === "all";
+      if (key === "hiddenSites") return trueMap(value);
+      if (key === "collapsed" || key === "branchesOpen" || key === "covers") return typeof value === "boolean";
+      return false;
+    });
+  }
 
   // src/sites/animego.ts
   var FORMAT_BY_LABEL = {
@@ -609,7 +643,7 @@
     }
     return { title, related };
   }
-  function createAnimego(transport2) {
+  function createAnimego(transport) {
     const limit = limiter(2);
     const loadPage = (key, ctx) => {
       const url = new URL(key, location.origin);
@@ -617,7 +651,7 @@
         return Promise.resolve(parseAnimegoPage(document, url));
       }
       return ctx.cache.wrap("ag-page", key, 3 * DAY, async () => {
-        const res = await limit(() => transport2({ url: url.href, signal: ctx.signal, headers: { Accept: "text/html" } }));
+        const res = await limit(() => transport({ url: url.href, signal: ctx.signal, headers: { Accept: "text/html" } }));
         if (res.status !== 200) throw new Error(`animego: HTTP ${res.status}`);
         return parseAnimegoPage(new DOMParser().parseFromString(res.text, "text/html"), url);
       }, ctx.force);
@@ -644,8 +678,13 @@
           seen.add(r.key);
           out.set(r.key, r);
         }
+        let partial = false;
         const pages = await Promise.all(
-          first.slice(0, 15).map((r) => loadPage(r.key, ctx).catch(() => void 0))
+          first.slice(0, 15).map((r) => loadPage(r.key, ctx).catch((e) => {
+            if (isAbort(e)) throw e;
+            partial = true;
+            return void 0;
+          }))
         );
         for (const [i, p] of pages.entries()) {
           if (!p) continue;
@@ -658,7 +697,7 @@
             out.set(r.key, { ...r, relationKind: kind });
           }
         }
-        return [...out.values()];
+        return { titles: [...out.values()], partial };
       },
       searchUrl: (query) => `${location.origin}/search/all?q=${encodeURIComponent(query)}`
     };
@@ -712,12 +751,21 @@
     "ONA": "ONA",
     "Клип": "MUSIC"
   };
+  function isTrustedApiUrl(value) {
+    try {
+      const url = new URL(value);
+      return url.protocol === "https:" && !url.username && !url.password && ["cdnlibs.org", "hentaicdn.org"].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+    } catch {
+      return false;
+    }
+  }
   function detectApiBase() {
     try {
       const entries = performance.getEntriesByType("resource");
       for (const e of entries) {
-        const m = e.name.match(/^(https:\/\/[^/]+)\/api\/(anime|constants|auth)\b/);
-        if (m) return m[1];
+        if (!isTrustedApiUrl(e.name)) continue;
+        const url = new URL(e.name);
+        if (/^\/api\/(anime|constants|auth)\b/.test(url.pathname)) return url.origin;
       }
     } catch {
     }
@@ -773,7 +821,7 @@
     if (parts.length === 0 || /не найдена/i.test(t)) return void 0;
     return { key, url: `${ORIGIN}/ru/anime/${key}`, displayName: parts[0], names: parts };
   }
-  function createAnimeLib(transport2) {
+  function createAnimeLib(transport) {
     const limit = limiter(3);
     let apiBase;
     const get = async (path, signal) => {
@@ -781,8 +829,9 @@
       const base = apiBase ?? FALLBACK_API;
       const headers = { Accept: "application/json", "Site-Id": SITE_ID };
       const token = readToken();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await limit(() => transport2({ url: `${base}/api/${path}`, headers, signal }));
+      const url = `${base}/api/${path}`;
+      if (token && isTrustedApiUrl(url)) headers.Authorization = `Bearer ${token}`;
+      const res = await limit(() => transport({ url, headers, signal }));
       return parseJson(res, "AnimeLib");
     };
     const relations = (slug, ctx) => ctx.cache.wrap("al-lib-rel", slug, 12 * HOUR, async () => parseRelations(await get(`anime/${slug}/relations`, ctx.signal)), ctx.force);
@@ -822,13 +871,18 @@
         }
       },
       async loadRelated(current, ctx) {
+        let partial = false;
         const found = /* @__PURE__ */ new Map();
         const seen = /* @__PURE__ */ new Set([current.key]);
         let frontier = [{ key: current.key }];
         for (let depth = 0; depth < 2 && frontier.length > 0; depth++) {
           const next = [];
           const lists = await Promise.all(
-            frontier.map((f) => relations(f.key, ctx).then((r) => ({ f, r })).catch(() => ({ f, r: [] })))
+            frontier.map((f) => relations(f.key, ctx).then((r) => ({ f, r })).catch((e) => {
+              if (isAbort(e)) throw e;
+              partial = true;
+              return { f, r: [] };
+            }))
           );
           for (const { f, r } of lists) {
             for (const rel of r) {
@@ -842,7 +896,7 @@
           }
           frontier = next;
         }
-        return [...found.values()];
+        return { titles: [...found.values()], partial };
       },
       async search(query, ctx) {
         return ctx.cache.wrap("al-lib-search", query.toLowerCase(), 3 * DAY, async () => {
@@ -1427,9 +1481,9 @@ summary{cursor:pointer;color:var(--muted)}
      */
     zoom(it) {
       for (const old of document.querySelectorAll("[data-awo-zoom]")) old.remove();
-      const host2 = document.createElement("div");
-      host2.dataset.awoZoom = "1";
-      const shadow = host2.attachShadow({ mode: "open" });
+      const host = document.createElement("div");
+      host.dataset.awoZoom = "1";
+      const shadow = host.attachShadow({ mode: "open" });
       const style = document.createElement("style");
       style.textContent = ZOOM_CSS;
       const img = h("img");
@@ -1454,7 +1508,7 @@ summary{cursor:pointer;color:var(--muted)}
       const prevOverflow = root.style.overflow;
       root.style.overflow = "hidden";
       const close = () => {
-        host2.remove();
+        host.remove();
         root.style.overflow = prevOverflow;
         document.removeEventListener("keydown", onKey, true);
       };
@@ -1497,7 +1551,7 @@ summary{cursor:pointer;color:var(--muted)}
       });
       document.addEventListener("keydown", onKey, true);
       apply();
-      document.documentElement.append(host2);
+      document.documentElement.append(host);
       layer.tabIndex = -1;
       layer.focus({ preventScroll: true });
     }
@@ -1831,7 +1885,9 @@ summary{cursor:pointer;color:var(--muted)}
     const notes = [];
     let related = [];
     try {
-      related = (await adapter.loadRelated(current, ctx)).filter((t) => t.format !== "MUSIC");
+      const result = await adapter.loadRelated(current, ctx);
+      related = result.titles.filter((t) => t.format !== "MUSIC");
+      if (result.partial) notes.push("Часть связей с сайта не загрузилась, список может быть неполным.");
     } catch (e) {
       if (isAbort(e)) throw e;
       notes.push("Не удалось загрузить связи с сайта.");
@@ -1897,9 +1953,10 @@ summary{cursor:pointer;color:var(--muted)}
     const kv = gmKV();
     const cache = new Cache(kv);
     const user = new UserState(kv);
-    const anilist = new AniListClient(withRetry(gmTransport, { retries: 2 }));
+    const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, minIntervalMs: 2500 }));
     let session = null;
     const load = (s, force) => {
+      if (hiddenHere()) return;
       s.ctrl.abort();
       s.ctrl = new AbortController();
       const ctx = { signal: s.ctrl.signal, cache, force };
@@ -1915,7 +1972,7 @@ summary{cursor:pointer;color:var(--muted)}
       buildWatchOrder(s.key, { adapter, anilist, user, ctx }).finally(() => clearTimeout(timer)).then((result) => {
         if (session === s && !ctx.signal.aborted) s.view.set({ status: "ready", result });
       }).catch((e) => {
-        if (isAbort(e) || session !== s) return;
+        if (isAbort(e) || ctx.signal.aborted || session !== s) return;
         console.warn("[animelib-watch-order]", e);
         s.view.set({ status: "error", message: e instanceof Error ? e.message : "ошибка загрузки" });
       });
@@ -1942,16 +1999,21 @@ summary{cursor:pointer;color:var(--muted)}
       if (hidden) sites[adapter.id] = true;
       else delete sites[adapter.id];
       user.setPrefs({ hiddenSites: sites });
+      if (hidden) {
+        session?.ctrl.abort();
+        session?.view.root.remove();
+        session = null;
+      } else route(new URL(location.href));
       mount();
     };
     gmMenuCommand("Показать/скрыть «Порядок просмотра» на этом сайте", () => setHidden(!hiddenHere()));
-    watchRoute((url) => {
+    const route = (url) => {
       const key = adapter.pageKey(url);
       if (session?.key === key) return;
       session?.ctrl.abort();
       session?.view.root.remove();
       session = null;
-      if (!key) return;
+      if (!key || hiddenHere()) return;
       const s = {
         key,
         ctrl: new AbortController(),
@@ -1964,11 +2026,18 @@ summary{cursor:pointer;color:var(--muted)}
       session = s;
       mount();
       load(s, false);
-    });
+    };
+    watchRoute(route);
     watchDom(mount);
   }
-  var host = location.hostname;
-  var transport = withRetry(fetchTransport, { retries: 2 });
-  if (/(^|\.)animelib\.org$/.test(host)) start(createAnimeLib(transport));
-  else if (/(^|\.)animego\.[a-z]+$/.test(host)) start(createAnimego(transport));
+  var marker = "data-awo-active";
+  if (document.documentElement.hasAttribute(marker)) {
+    console.info("[animelib-watch-order] Скрипт уже запущен на этой странице.");
+  } else {
+    document.documentElement.setAttribute(marker, "true");
+    const host = location.hostname;
+    const transport = withRetry(fetchTransport, { retries: 2 });
+    if (/(^|\.)animelib\.org$/.test(host)) start(createAnimeLib(transport));
+    else if (/(^|\.)animego\.[a-z]+$/.test(host)) start(createAnimego(transport));
+  }
 })();

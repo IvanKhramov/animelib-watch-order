@@ -19,10 +19,11 @@ function start(adapter: SiteAdapter) {
   const kv = gmKV();
   const cache = new Cache(kv);
   const user = new UserState(kv);
-  const anilist = new AniListClient(withRetry(gmTransport, { retries: 2 }));
+  const anilist = new AniListClient(withRetry(gmTransport, { retries: 2, minIntervalMs: 2500 }));
   let session: Session | null = null;
 
   const load = (s: Session, force: boolean) => {
+    if (hiddenHere()) return;
     s.ctrl.abort();
     s.ctrl = new AbortController();
     const ctx = { signal: s.ctrl.signal, cache, force };
@@ -42,7 +43,7 @@ function start(adapter: SiteAdapter) {
         if (session === s && !ctx.signal.aborted) s.view.set({ status: 'ready', result });
       })
       .catch((e: unknown) => {
-        if (isAbort(e) || session !== s) return;
+        if (isAbort(e) || ctx.signal.aborted || session !== s) return;
         console.warn('[animelib-watch-order]', e);
         s.view.set({ status: 'error', message: e instanceof Error ? e.message : 'ошибка загрузки' });
       });
@@ -73,17 +74,22 @@ function start(adapter: SiteAdapter) {
     if (hidden) sites[adapter.id] = true;
     else delete sites[adapter.id];
     user.setPrefs({ hiddenSites: sites });
+    if (hidden) {
+      session?.ctrl.abort();
+      session?.view.root.remove();
+      session = null;
+    } else route(new URL(location.href));
     mount();
   };
   gmMenuCommand('Показать/скрыть «Порядок просмотра» на этом сайте', () => setHidden(!hiddenHere()));
 
-  watchRoute((url) => {
+  const route = (url: URL) => {
     const key = adapter.pageKey(url);
     if (session?.key === key) return;
     session?.ctrl.abort();
     session?.view.root.remove();
     session = null;
-    if (!key) return;
+    if (!key || hiddenHere()) return;
     const s: Session = {
       key,
       ctrl: new AbortController(),
@@ -96,11 +102,19 @@ function start(adapter: SiteAdapter) {
     session = s;
     mount();
     load(s, false);
-  });
+  };
+  watchRoute(route);
   watchDom(mount);
 }
 
-const host = location.hostname;
-const transport = withRetry(fetchTransport, { retries: 2 });
-if (/(^|\.)animelib\.org$/.test(host)) start(createAnimeLib(transport));
-else if (/(^|\.)animego\.[a-z]+$/.test(host)) start(createAnimego(transport));
+// DOM общий даже для копий скрипта в разных песочницах менеджера.
+const marker = 'data-awo-active';
+if (document.documentElement.hasAttribute(marker)) {
+  console.info('[animelib-watch-order] Скрипт уже запущен на этой странице.');
+} else {
+  document.documentElement.setAttribute(marker, 'true');
+  const host = location.hostname;
+  const transport = withRetry(fetchTransport, { retries: 2 });
+  if (/(^|\.)animelib\.org$/.test(host)) start(createAnimeLib(transport));
+  else if (/(^|\.)animego\.[a-z]+$/.test(host)) start(createAnimego(transport));
+}

@@ -1,6 +1,6 @@
 import { parseIsoDate } from '../dates';
 import { arr, isObj, str } from '../guards';
-import { limiter, type Transport } from '../http';
+import { isAbort, limiter, type Transport } from '../http';
 import { DAY } from '../storage';
 import type { MediaFormat, SiteRelationKind, SiteTitle } from '../types';
 import type { LoadCtx, SiteAdapter } from './site';
@@ -157,8 +157,13 @@ export function createAnimego(transport: Transport): SiteAdapter {
         seen.add(r.key);
         out.set(r.key, r);
       }
+      let partial = false;
       const pages = await Promise.all(
-        first.slice(0, 15).map((r) => loadPage(r.key, ctx).catch(() => undefined)),
+        first.slice(0, 15).map((r) => loadPage(r.key, ctx).catch((e: unknown) => {
+          if (isAbort(e)) throw e;
+          partial = true;
+          return undefined;
+        })),
       );
       for (const [i, p] of pages.entries()) {
         if (!p) continue;
@@ -171,7 +176,7 @@ export function createAnimego(transport: Transport): SiteAdapter {
           out.set(r.key, { ...r, relationKind: kind });
         }
       }
-      return [...out.values()];
+      return { titles: [...out.values()], partial };
     },
 
     searchUrl: (query) => `${location.origin}/search/all?q=${encodeURIComponent(query)}`,

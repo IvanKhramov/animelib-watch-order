@@ -1,6 +1,6 @@
 import { parseIsoDate, parseRuDate } from '../dates';
 import { arr, isObj, num, obj, str, strings, type Obj } from '../guards';
-import { HttpError, limiter, parseJson, type Transport } from '../http';
+import { HttpError, isAbort, limiter, parseJson, type Transport } from '../http';
 import { DAY, HOUR } from '../storage';
 import type { MediaFormat, SiteRelationKind, SiteTitle } from '../types';
 import type { LoadCtx, SiteAdapter } from './site';
@@ -44,13 +44,25 @@ const FORMAT_BY_LABEL: Record<string, MediaFormat> = {
   'Клип': 'MUSIC',
 };
 
+/** Токен разрешён только для HTTPS API на доменах AnimeLib. */
+export function isTrustedApiUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password &&
+      ['cdnlibs.org', 'hentaicdn.org'].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
+  } catch {
+    return false;
+  }
+}
+
 /** Хост API из запросов самой страницы; undefined, если страница их ещё не делала. */
 export function detectApiBase(): string | undefined {
   try {
     const entries = performance.getEntriesByType('resource') as PerformanceResourceTiming[];
     for (const e of entries) {
-      const m = e.name.match(/^(https:\/\/[^/]+)\/api\/(anime|constants|auth)\b/);
-      if (m) return m[1]!;
+      if (!isTrustedApiUrl(e.name)) continue;
+      const url = new URL(e.name);
+      if (/^\/api\/(anime|constants|auth)\b/.test(url.pathname)) return url.origin;
     }
   } catch {
     /* нет Performance API */
@@ -130,8 +142,9 @@ export function createAnimeLib(transport: Transport): SiteAdapter {
     const base = apiBase ?? FALLBACK_API;
     const headers: Record<string, string> = { Accept: 'application/json', 'Site-Id': SITE_ID };
     const token = readToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const res = await limit(() => transport({ url: `${base}/api/${path}`, headers, signal }));
+    const url = `${base}/api/${path}`;
+    if (token && isTrustedApiUrl(url)) headers.Authorization = `Bearer ${token}`;
+    const res = await limit(() => transport({ url, headers, signal }));
     return parseJson(res, 'AnimeLib');
   };
 
@@ -181,13 +194,18 @@ export function createAnimeLib(transport: Transport): SiteAdapter {
     },
 
     async loadRelated(current, ctx) {
+      let partial = false;
       const found = new Map<string, SiteTitle>();
       const seen = new Set([current.key]);
       let frontier: { key: string; kind?: SiteRelationKind }[] = [{ key: current.key }];
       for (let depth = 0; depth < 2 && frontier.length > 0; depth++) {
         const next: typeof frontier = [];
         const lists = await Promise.all(
-          frontier.map((f) => relations(f.key, ctx).then((r) => ({ f, r })).catch(() => ({ f, r: [] as LibRelation[] }))),
+          frontier.map((f) => relations(f.key, ctx).then((r) => ({ f, r })).catch((e: unknown) => {
+            if (isAbort(e)) throw e;
+            partial = true;
+            return { f, r: [] as LibRelation[] };
+          })),
         );
         for (const { f, r } of lists) {
           for (const rel of r) {
@@ -202,7 +220,7 @@ export function createAnimeLib(transport: Transport): SiteAdapter {
         }
         frontier = next;
       }
-      return [...found.values()];
+      return { titles: [...found.values()], partial };
     },
 
     async search(query, ctx) {

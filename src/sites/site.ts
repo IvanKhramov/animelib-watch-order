@@ -22,7 +22,7 @@ export interface SiteAdapter {
   findAnchor(doc: Document): Anchor | null;
   loadCurrent(key: string, ctx: LoadCtx): Promise<SiteTitle>;
   /** аниме из той же франшизы, известные сайту (без манги/ранобэ) */
-  loadRelated(current: SiteTitle, ctx: LoadCtx): Promise<SiteTitle[]>;
+  loadRelated(current: SiteTitle, ctx: LoadCtx): Promise<{ titles: SiteTitle[]; partial: boolean }>;
   /** поиск по каталогу сайта; без него ненайденные узлы получают только ссылку на поиск */
   search?(query: string, ctx: LoadCtx): Promise<SiteTitle[]>;
   searchUrl(query: string): string;

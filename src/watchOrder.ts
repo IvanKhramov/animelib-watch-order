@@ -176,7 +176,9 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   const notes: string[] = [];
   let related: SiteTitle[] = [];
   try {
-    related = (await adapter.loadRelated(current, ctx)).filter((t) => t.format !== 'MUSIC');
+    const result = await adapter.loadRelated(current, ctx);
+    related = result.titles.filter((t) => t.format !== 'MUSIC');
+    if (result.partial) notes.push('Часть связей с сайта не загрузилась, список может быть неполным.');
   } catch (e) {
     if (isAbort(e)) throw e;
     notes.push('Не удалось загрузить связи с сайта.');

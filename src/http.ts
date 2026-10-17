@@ -81,6 +81,10 @@ export interface RetryOptions {
   retries?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  maxRetryAfterMs?: number;
+  minIntervalMs?: number;
+  now?: () => number;
+  sleep?: typeof sleep;
 }
 
 /** Повторы с backoff на 429/5xx и сетевых ошибках. Прочие 4xx отдаются как есть. */
@@ -88,10 +92,24 @@ export function withRetry(transport: Transport, opts: RetryOptions = {}): Transp
   const retries = opts.retries ?? 2;
   const base = opts.baseDelayMs ?? 800;
   const max = opts.maxDelayMs ?? 10_000;
+  const maxRetryAfter = opts.maxRetryAfterMs ?? 120_000;
+  const interval = opts.minIntervalMs ?? 0;
+  const now = opts.now ?? Date.now;
+  const wait = opts.sleep ?? sleep;
+  let pausedUntil = 0;
+  let nextRequestAt = 0;
   return async (req) => {
     let attempt = 0;
     for (;;) {
       if (req.signal?.aborted) throw new AbortError();
+      // После ожидания проверяем паузу снова: соседний запрос мог продлить её.
+      for (;;) {
+        if (req.signal?.aborted) throw new AbortError();
+        const delay = Math.max(pausedUntil, nextRequestAt) - now();
+        if (delay <= 0) break;
+        await wait(delay, req.signal);
+      }
+      nextRequestAt = now() + interval;
       let res: HttpResponse | undefined;
       let err: unknown;
       try {
@@ -100,15 +118,19 @@ export function withRetry(transport: Transport, opts: RetryOptions = {}): Transp
         if (isAbort(e)) throw e;
         err = e;
       }
+      const hinted = res?.retryAfter !== undefined && Number.isFinite(res.retryAfter)
+        ? Math.max(0, res.retryAfter * 1000) : 0;
+      const delay = Math.max(hinted, Math.min(max, base * 2 ** attempt));
+      // Пауза общая для транспорта, в том числе после последней попытки.
+      if (res?.status === 429) pausedUntil = Math.max(pausedUntil, now() + delay);
+      if (res && hinted > maxRetryAfter) return res;
       const retriable = !res || res.status === 429 || res.status >= 500;
       if (!retriable || attempt >= retries) {
         if (res) return res;
         throw err;
       }
-      const hinted = res?.retryAfter !== undefined ? res.retryAfter * 1000 : 0;
-      const delay = Math.min(max, Math.max(hinted, base * 2 ** attempt));
       attempt++;
-      await sleep(delay, req.signal);
+      if (res?.status !== 429) await wait(delay, req.signal);
     }
   };
 }
@@ -125,6 +147,7 @@ export const fetchTransport: Transport = async (req) => {
       headers: req.headers,
       body: req.body,
       credentials: 'omit',
+      referrerPolicy: 'no-referrer',
       signal: ctrl.signal,
     });
     const ra = Number(r.headers.get('retry-after'));

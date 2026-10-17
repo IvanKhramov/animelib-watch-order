@@ -19,7 +19,6 @@ const header = `// ==UserScript==
 // @license      MIT
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
-// @match        https://animego.org/*
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
