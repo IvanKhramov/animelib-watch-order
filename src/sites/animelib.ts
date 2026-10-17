@@ -162,14 +162,6 @@ export function createAnimeLib(transport: Transport): SiteAdapter {
       return null;
     },
 
-    decorate(root, heading) {
-      root.classList.add('section-body');
-      const head = document.createElement('div');
-      head.className = 'media-section-head';
-      heading.classList.add('section-title', 'size-sm');
-      heading.replaceWith(head);
-      head.appendChild(heading);
-    },
 
     async loadCurrent(key, ctx) {
       try {

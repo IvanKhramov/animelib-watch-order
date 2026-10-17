@@ -22,6 +22,12 @@ declare const GM_xmlhttpRequest: ((req: GmRequest) => { abort(): void }) | undef
 declare const GM_getValue: (<T>(key: string, def?: T) => T) | undefined;
 declare const GM_setValue: ((key: string, v: unknown) => void) | undefined;
 declare const GM_deleteValue: ((key: string) => void) | undefined;
+declare const GM_registerMenuCommand: ((name: string, fn: () => void) => unknown) | undefined;
+
+/** Пункт в меню менеджера скриптов; без менеджера просто ничего не делает. */
+export function gmMenuCommand(name: string, fn: () => void) {
+  if (typeof GM_registerMenuCommand === 'function') GM_registerMenuCommand(name, fn);
+}
 
 /**
  * Транспорт для внешних хостов (AniList) через GM_xmlhttpRequest.

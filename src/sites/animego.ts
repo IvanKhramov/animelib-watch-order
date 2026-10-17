@@ -141,13 +141,6 @@ export function createAnimego(transport: Transport): SiteAdapter {
       return null;
     },
 
-    decorate(root, heading) {
-      root.classList.add('mt-4');
-      const h2 = document.createElement('h2');
-      h2.className = 'mb-2';
-      h2.append(...heading.childNodes);
-      heading.replaceWith(h2);
-    },
 
     async loadCurrent(key, ctx) {
       return (await loadPage(key, ctx)).title;

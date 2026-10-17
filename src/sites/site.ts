@@ -20,8 +20,6 @@ export interface SiteAdapter {
   pageKey(url: URL): string | null;
   /** место для блока; null, пока нужная часть страницы не отрисована */
   findAnchor(doc: Document): Anchor | null;
-  /** оформить шапку блока в стиле сайта */
-  decorate?(root: HTMLElement, heading: HTMLElement): void;
   loadCurrent(key: string, ctx: LoadCtx): Promise<SiteTitle>;
   /** аниме из той же франшизы, известные сайту (без манги/ранобэ) */
   loadRelated(current: SiteTitle, ctx: LoadCtx): Promise<SiteTitle[]>;

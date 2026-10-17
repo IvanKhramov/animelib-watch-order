@@ -1,9 +1,7 @@
+import { applyOrder, move } from './customOrder';
 import { pairKey } from './matching';
-import type { SiteAdapter } from './sites/site';
 import type { UserState } from './storage';
 import type { FuzzyDate, ItemKind, OrderItem, OrderResult } from './types';
-
-export type View = 'main' | 'all';
 
 export type UiState =
   | { status: 'loading' }
@@ -12,54 +10,64 @@ export type UiState =
 
 export interface UiHandlers {
   refresh(): void;
-  /** пользователь отклонил сопоставление: пересобрать без него */
-  rejectMatch(pair: string): void;
+  /** данные пользователя поменялись так, что нужна пересборка (отклонённое сопоставление, импорт) */
+  reload(): void;
+  /** скрыть блок на этом сайте */
+  hideOnSite(): void;
 }
 
-const STYLE_ID = 'awo-style';
+// Блок живёт в Shadow DOM: стили сайта на него не влияют, вид одинаковый на всех сайтах.
 const CSS = `
-.awo{margin:0 0 20px}
-.awo-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-.awo-ctl{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
-.awo-btn{font:inherit;font-size:12px;line-height:18px;padding:2px 10px;border-radius:6px;cursor:pointer;color:inherit;
-  background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent)}
-.awo-btn:hover,.awo-btn.is-active{background:color-mix(in srgb,currentColor 14%,transparent)}
-.awo-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
-.awo-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:6px 10px;border-radius:8px;
-  background:color-mix(in srgb,currentColor 5%,transparent)}
-.awo-row.is-current{background:color-mix(in srgb,currentColor 13%,transparent)}
-.awo-row.is-current .awo-title{font-weight:600}
-.awo-row.is-side{margin-left:18px}
-.awo-mark{all:unset;cursor:pointer;width:1.2em;text-align:center;opacity:.8;font-variant-emoji:text}
-.awo-mark:hover{opacity:1}
-.awo-num{min-width:1.6em;opacity:.6;font-variant-numeric:tabular-nums}
-.awo-title{color:inherit;text-decoration:none;overflow-wrap:anywhere}
-a.awo-title:hover{text-decoration:underline}
-.awo-sub,.awo-meta{font-size:12px;opacity:.6}
-.awo-warn{font-size:12px;color:#e0a030}
-.awo-miss{font-size:12px;opacity:.75}
-.awo-miss a{color:inherit}
-.awo-link{all:unset;cursor:pointer;font-size:12px;text-decoration:underline;opacity:.7}
-.awo-branches{margin-top:10px}
-.awo-branches summary{cursor:pointer;opacity:.8}
-.awo-notes{margin-top:8px;font-size:12px;opacity:.7}
-.awo-state{margin-top:10px;opacity:.75}
+:host{all:initial;display:block;margin:0 0 20px;color:var(--fg);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+:host([data-theme=dark]){--fg:#e8e8ea;--muted:#a1a1aa;--row:rgba(255,255,255,.05);--row-hi:rgba(255,255,255,.12);
+  --line:rgba(255,255,255,.16);--accent:#8b7cf6;--warn:#e3a33b;--panel:#232327;--shadow:rgba(0,0,0,.5)}
+:host([data-theme=light]){--fg:#1d1d1f;--muted:#6b6b73;--row:rgba(0,0,0,.04);--row-hi:rgba(0,0,0,.09);
+  --line:rgba(0,0,0,.15);--accent:#6a4ff0;--warn:#a85f00;--panel:#fff;--shadow:rgba(0,0,0,.18)}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit}
+.head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.toggle{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:0}
+.chev{display:inline-block;width:1em;text-align:center;color:var(--muted);transition:transform .15s}
+.collapsed .chev{transform:rotate(-90deg)}
+h2{margin:0;font-size:18px;font-weight:600;line-height:1.3}
+.sum{font-size:12px;color:var(--muted)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto;position:relative}
+.btn{font-size:12px;line-height:18px;padding:3px 10px;border-radius:6px;cursor:pointer;background:transparent;
+  border:1px solid var(--line)}
+.btn:hover,.btn.on{background:var(--row-hi)}
+.seg{display:inline-flex}
+.seg .btn{border-radius:0}
+.seg .btn:first-child{border-radius:6px 0 0 6px}
+.seg .btn:last-child{border-radius:0 6px 6px 0;border-left:0}
+.menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:220px;padding:4px;border-radius:8px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 24px var(--shadow)}
+.menu button{all:unset;display:block;width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px}
+.menu button:hover{background:var(--row-hi)}
+ol{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+li{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding:6px 10px;border-radius:8px;background:var(--row)}
+li.cur{background:var(--row-hi);box-shadow:inset 3px 0 0 var(--accent)}
+li.cur .title{font-weight:600}
+li.side{margin-left:20px}
+li.done .title{color:var(--muted)}
+.mark{all:unset;cursor:pointer;width:1.3em;text-align:center;color:var(--muted)}
+.mark:hover{color:var(--fg)}
+li.done .mark{color:var(--accent)}
+.num{min-width:1.5em;color:var(--muted);font-variant-numeric:tabular-nums}
+.title{color:inherit;text-decoration:none;overflow-wrap:anywhere}
+a.title:hover{text-decoration:underline}
+.meta,.sub{font-size:12px;color:var(--muted)}
+.warn{font-size:12px;color:var(--warn)}
+.miss{font-size:12px;color:var(--muted)}
+.miss a{color:inherit}
+.link{all:unset;cursor:pointer;font-size:12px;text-decoration:underline;color:var(--muted)}
+.edit{display:flex;gap:4px;margin-left:auto}
+.edit .btn{padding:1px 8px}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--muted)}
+.note{margin-top:8px;font-size:12px;color:var(--muted)}
+.state{margin-top:10px;color:var(--muted)}
 `;
-
-function ensureStyle(doc: Document) {
-  if (doc.getElementById(STYLE_ID)) return;
-  const s = doc.createElement('style');
-  s.id = STYLE_ID;
-  s.textContent = CSS;
-  doc.head.appendChild(s);
-}
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
-}
 
 const KIND_LABEL: Record<ItemKind, string> = {
   main: '',
@@ -72,137 +80,372 @@ const KIND_LABEL: Record<ItemKind, string> = {
 
 const yearOf = (d: FuzzyDate | undefined) => (d?.year ? String(d.year) : undefined);
 
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: { class?: string; text?: string; title?: string; onClick?: () => void } = {},
+  ...children: (Node | string | false | undefined)[]
+): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (props.class) e.className = props.class;
+  if (props.text !== undefined) e.textContent = props.text;
+  if (props.title) e.title = props.title;
+  if (props.onClick) {
+    const fn = props.onClick;
+    e.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      fn();
+    });
+  }
+  if (e instanceof HTMLButtonElement) e.type = 'button';
+  for (const c of children) if (c) e.append(c);
+  return e;
+}
+
+/** Тёмная ли тема под блоком: по первому непрозрачному фону вверх по дереву. */
+export function isDarkBackground(start: Element | null): boolean {
+  for (let el = start; el; el = el.parentElement) {
+    const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
+    if (!m || (m[4] !== undefined && Number(m[4]) < 0.5)) continue;
+    const [r, g, b] = [m[1], m[2], m[3]].map(Number) as [number, number, number];
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+  }
+  return matchMedia('(prefers-color-scheme: dark)').matches;
+}
+
 export class WatchOrderView {
+  /** элемент в DOM сайта; всё содержимое в его shadow root */
   readonly root: HTMLElement;
-  private view: View = 'all';
+  private readonly box: HTMLElement;
   private state: UiState = { status: 'loading' };
+  private editing = false;
+  private menuOpen = false;
 
   constructor(
-    private readonly adapter: SiteAdapter,
     private readonly user: UserState,
     private readonly handlers: UiHandlers,
   ) {
-    ensureStyle(document);
-    this.root = el('section', 'awo');
+    this.root = document.createElement('div');
     this.root.dataset.awo = '1';
+    this.root.dataset.theme = 'dark';
+    const shadow = this.root.attachShadow({ mode: 'open' });
+    const style = document.createElement('style');
+    style.textContent = CSS;
+    this.box = document.createElement('div');
+    shadow.append(style, this.box);
     this.render();
   }
 
   set(state: UiState) {
     this.state = state;
+    this.root.dataset.status = state.status;
     this.render();
   }
 
-  private render() {
-    const r = this.root;
-    r.replaceChildren();
-    const heading = el('div', 'awo-heading', 'Порядок просмотра');
-    const head = el('div', 'awo-head');
-    head.append(heading);
-    const ctl = el('div', 'awo-ctl');
-    const ready = this.state.status === 'ready' ? this.state.result : undefined;
-    if (ready?.mode === 'anilist') {
-      for (const [v, label] of [['main', 'Основное'], ['all', 'Всё']] as const) {
-        const b = el('button', 'awo-btn' + (this.view === v ? ' is-active' : ''), label);
-        b.type = 'button';
-        b.addEventListener('click', () => {
-          this.view = v;
-          this.render();
-        });
-        ctl.append(b);
-      }
-    }
-    const refresh = el('button', 'awo-btn', 'Обновить');
-    refresh.type = 'button';
-    refresh.title = 'Загрузить данные заново, без кэша';
-    refresh.addEventListener('click', () => this.handlers.refresh());
-    ctl.append(refresh);
-    head.append(ctl);
-    r.append(head);
-    this.adapter.decorate?.(r, heading);
+  /** Подстроить тему под фон страницы; зовётся при каждом монтировании. */
+  syncTheme() {
+    const theme = isDarkBackground(this.root.parentElement) ? 'dark' : 'light';
+    if (this.root.dataset.theme !== theme) this.root.dataset.theme = theme;
+  }
 
-    if (this.state.status === 'loading') {
-      r.append(el('div', 'awo-state', 'Загружаю связи франшизы…'));
-      return;
+  private result(): OrderResult | undefined {
+    return this.state.status === 'ready' ? this.state.result : undefined;
+  }
+
+  /** Элементы основного списка с учётом своего порядка, скрытых и режима. */
+  private arranged(res: OrderResult) {
+    const prefs = this.user.prefs();
+    const custom = this.user.customOrder(res.franchiseKey);
+    const byKey = new Map(res.items.map((i) => [i.watchKey, i]));
+    const keys = applyOrder(res.items.map((i) => i.watchKey), custom?.order);
+    const hidden = new Set(custom?.hidden ?? []);
+    const all = keys.map((k) => byKey.get(k)!);
+    const showAll = prefs.view === 'all' || res.mode !== 'anilist';
+    const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === 'main' || i.isCurrent));
+    return { keys, all, visible, hiddenItems: all.filter((i) => hidden.has(i.watchKey)), custom };
+  }
+
+  private render() {
+    const prefs = this.user.prefs();
+    const res = this.result();
+    const wrap = h('div', { class: prefs.collapsed ? 'collapsed' : '' });
+    wrap.append(this.header(res));
+    if (!prefs.collapsed) wrap.append(...this.body(res));
+    this.box.replaceChildren(wrap);
+  }
+
+  private header(res: OrderResult | undefined): HTMLElement {
+    const prefs = this.user.prefs();
+    const toggle = h(
+      'button',
+      {
+        class: 'toggle',
+        title: prefs.collapsed ? 'Развернуть' : 'Свернуть',
+        onClick: () => {
+          this.user.setPrefs({ collapsed: !prefs.collapsed });
+          this.render();
+        },
+      },
+      h('span', { class: 'chev', text: '▾' }),
+      h('h2', { text: 'Порядок просмотра' }),
+    );
+    const head = h('div', { class: 'head' }, toggle);
+    if (res) head.append(h('span', { class: 'sum', text: this.summary(res) }));
+    if (prefs.collapsed) return head;
+
+    const ctl = h('div', { class: 'ctl' });
+    if (res?.mode === 'anilist') {
+      const seg = h('span', { class: 'seg' });
+      for (const [v, label] of [['main', 'Основное'], ['all', 'Всё']] as const) {
+        seg.append(
+          h('button', {
+            class: 'btn' + (prefs.view === v ? ' on' : ''),
+            text: label,
+            onClick: () => {
+              this.user.setPrefs({ view: v });
+              this.render();
+            },
+          }),
+        );
+      }
+      ctl.append(seg);
     }
-    if (this.state.status === 'error') {
-      r.append(el('div', 'awo-state', `Порядок не определён: ${this.state.message}`));
-      return;
+    if (res) {
+      ctl.append(
+        h('button', {
+          class: 'btn' + (this.editing ? ' on' : ''),
+          text: this.editing ? 'Готово' : 'Править',
+          title: 'Поменять порядок и скрыть лишнее',
+          onClick: () => {
+            this.editing = !this.editing;
+            this.render();
+          },
+        }),
+      );
     }
-    const res = this.state.result;
-    const items = this.view === 'main' && res.mode === 'anilist' ? res.items.filter((i) => i.kind === 'main') : res.items;
-    if (items.length === 0) {
-      r.append(el('div', 'awo-state', 'Порядок не определён.'));
+    ctl.append(h('button', { class: 'btn', text: 'Обновить', title: 'Загрузить данные заново, без кэша', onClick: () => this.handlers.refresh() }));
+    ctl.append(
+      h('button', {
+        class: 'btn' + (this.menuOpen ? ' on' : ''),
+        text: '⋯',
+        title: 'Ещё',
+        onClick: () => {
+          this.menuOpen = !this.menuOpen;
+          this.render();
+        },
+      }),
+    );
+    if (this.menuOpen) ctl.append(this.menu(res));
+    head.append(ctl);
+    return head;
+  }
+
+  private menu(res: OrderResult | undefined): HTMLElement {
+    const close = (fn: () => void) => () => {
+      this.menuOpen = false;
+      fn();
+      this.render();
+    };
+    const m = h('div', { class: 'menu' });
+    m.append(h('button', { text: 'Экспорт отметок в файл', onClick: close(() => this.exportFile()) }));
+    m.append(h('button', { text: 'Импорт отметок из файла', onClick: close(() => this.importFile()) }));
+    if (res && this.user.customOrder(res.franchiseKey)) {
+      m.append(
+        h('button', {
+          text: 'Сбросить свой порядок для франшизы',
+          onClick: close(() => this.user.setCustomOrder(res.franchiseKey, undefined)),
+        }),
+      );
+    }
+    m.append(h('button', { text: 'Скрыть блок на этом сайте', onClick: close(() => this.handlers.hideOnSite()) }));
+    return m;
+  }
+
+  private summary(res: OrderResult): string {
+    const { visible } = this.arranged(res);
+    const main = visible.filter((i) => i.kind === 'main');
+    const watched = main.filter((i) => this.user.isWatched(i.watchKey)).length;
+    const pos = main.findIndex((i) => i.isCurrent);
+    const parts: string[] = [];
+    if (pos >= 0 && res.mode === 'anilist') parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
+    if (watched > 0) parts.push(`просмотрено ${watched} из ${main.length}`);
+    if (this.user.prefs().collapsed) {
+      const next = main.find((i, n) => n > pos && !this.user.isWatched(i.watchKey));
+      if (next && pos >= 0) parts.push(`дальше: ${next.title}`);
+    }
+    return parts.join(' · ');
+  }
+
+  private body(res: OrderResult | undefined): HTMLElement[] {
+    if (this.state.status === 'loading') return [h('div', { class: 'state', text: 'Загружаю связи франшизы…' })];
+    if (this.state.status === 'error') return [h('div', { class: 'state', text: `Порядок не определён: ${this.state.message}` })];
+    if (!res) return [];
+    const out: HTMLElement[] = [];
+    const { keys, visible, hiddenItems, custom } = this.arranged(res);
+    if (visible.length === 0) {
+      out.push(h('div', { class: 'state', text: 'Порядок не определён.' }));
     } else {
-      const list = el('ol', 'awo-list');
-      for (const it of items) list.append(this.row(it));
-      r.append(list);
+      const list = h('ol');
+      const visibleKeys = new Set(visible.map((i) => i.watchKey));
+      let n = 0;
+      for (const it of visible) {
+        const index = res.mode === 'anilist' && it.kind === 'main' ? ++n : undefined;
+        list.append(this.row(it, index, { keys, visibleKeys, franchise: res.franchiseKey, hidden: custom?.hidden ?? [] }));
+      }
+      out.push(list);
+    }
+    if (this.editing && hiddenItems.length > 0) {
+      const d = h('details');
+      d.open = true;
+      d.append(h('summary', { text: `Скрытые (${hiddenItems.length})` }));
+      const list = h('ol');
+      for (const it of hiddenItems) {
+        list.append(
+          h(
+            'li',
+            {},
+            h('span', { class: 'title', text: it.title }),
+            h('span', { class: 'meta', text: [it.formatLabel, yearOf(it.date)].filter(Boolean).join(' · ') }),
+            h(
+              'span',
+              { class: 'edit' },
+              h('button', {
+                class: 'btn',
+                text: 'Вернуть',
+                onClick: () => {
+                  const hidden = (custom?.hidden ?? []).filter((k) => k !== it.watchKey);
+                  this.user.setCustomOrder(res.franchiseKey, { order: custom?.order ?? [], hidden });
+                  this.render();
+                },
+              }),
+            ),
+          ),
+        );
+      }
+      d.append(list);
+      out.push(d);
     }
     if (res.branches.length > 0) {
-      const d = el('details', 'awo-branches');
-      d.append(el('summary', undefined, `Альтернативы и прочее (${res.branches.length})`));
-      const list = el('ol', 'awo-list');
-      for (const it of res.branches) list.append(this.row(it));
+      const d = h('details');
+      d.open = this.user.prefs().branchesOpen;
+      d.addEventListener('toggle', () => this.user.setPrefs({ branchesOpen: d.open }));
+      d.append(h('summary', { text: `Альтернативы и прочее (${res.branches.length})` }));
+      const list = h('ol');
+      for (const it of res.branches) list.append(this.row(it, undefined));
       d.append(list);
-      r.append(d);
+      out.push(d);
     }
     const notes = [...res.notes];
     if (res.mode === 'anilist') notes.push('Рекомендованный порядок по связям и датам выхода AniList, не каноническая хронология.');
-    r.append(el('div', 'awo-notes', notes.join(' ')));
+    if (custom) notes.push('Порядок изменён вами.');
+    out.push(h('div', { class: 'note', text: notes.join(' ') }));
+    return out;
   }
 
-  private row(it: OrderItem): HTMLElement {
-    const li = el('li', 'awo-row');
-    if (it.isCurrent) li.classList.add('is-current');
-    if (it.kind !== 'main' && this.view === 'all' && it.kind !== 'other') li.classList.add('is-side');
-
+  private row(
+    it: OrderItem,
+    index: number | undefined,
+    edit?: { keys: string[]; visibleKeys: Set<string>; franchise: string; hidden: string[] },
+  ): HTMLElement {
     const watched = this.user.isWatched(it.watchKey);
-    const mark = el('button', 'awo-mark', it.isCurrent ? '▶\uFE0E' : watched ? '✓' : it.kind === 'main' ? '○' : '◇');
-    mark.type = 'button';
-    mark.title = watched ? 'Снять отметку «просмотрено»' : 'Отметить просмотренным';
-    mark.addEventListener('click', () => {
-      this.user.setWatched(it.watchKey, !watched);
-      this.render();
-    });
-    li.append(mark);
-    li.append(el('span', 'awo-num', it.index !== undefined ? String(it.index) : ''));
+    const li = h('li');
+    if (it.isCurrent) li.classList.add('cur');
+    if (watched) li.classList.add('done');
+    if (edit && it.kind !== 'main') li.classList.add('side');
+
+    li.append(
+      h('button', {
+        class: 'mark',
+        text: watched ? '✓' : it.isCurrent ? '▶︎' : it.kind === 'main' ? '○' : '◇',
+        title: watched ? 'Снять отметку «просмотрено»' : 'Отметить просмотренным',
+        onClick: () => {
+          this.user.setWatched(it.watchKey, !watched);
+          this.render();
+        },
+      }),
+    );
+    li.append(h('span', { class: 'num', text: index !== undefined ? String(index) : '' }));
 
     const url = it.match?.title.url;
     if (url && !it.isCurrent) {
-      const a = el('a', 'awo-title', it.title);
+      const a = h('a', { class: 'title', text: it.title });
       a.href = url;
       li.append(a);
     } else {
-      li.append(el('span', 'awo-title', it.title));
+      li.append(h('span', { class: 'title', text: it.title }));
     }
 
-    const meta = [it.formatLabel, yearOf(it.date), KIND_LABEL[it.kind], it.isCurrent ? 'Вы здесь' : '', watched && it.isCurrent ? 'просмотрено' : '']
-      .filter(Boolean)
-      .join(' · ');
-    if (meta) li.append(el('span', 'awo-meta', meta));
-    for (const f of it.flags) li.append(el('span', 'awo-warn', f));
+    const meta = [it.formatLabel, yearOf(it.date), KIND_LABEL[it.kind], it.isCurrent ? 'вы здесь' : ''].filter(Boolean).join(' · ');
+    if (meta) li.append(h('span', { class: 'meta', text: meta }));
+    for (const f of it.flags) li.append(h('span', { class: 'warn', text: f }));
 
     const conf = it.match?.confidence;
     if (!it.isCurrent && it.alId !== undefined && it.match && (conf === 'name' || conf === 'date')) {
-      li.append(el('span', 'awo-warn', conf === 'name' ? '≈ по названию' : '≈ по дате выхода'));
-      const no = el('button', 'awo-link', 'не то');
-      no.type = 'button';
-      no.title = 'Убрать это сопоставление';
+      li.append(h('span', { class: 'warn', text: conf === 'name' ? '≈ по названию' : '≈ по дате выхода' }));
       const pair = pairKey(it.alId, it.match.title.key);
-      no.addEventListener('click', () => this.handlers.rejectMatch(pair));
-      li.append(no);
+      li.append(
+        h('button', {
+          class: 'link',
+          text: 'не то',
+          title: 'Убрать это сопоставление',
+          onClick: () => {
+            this.user.reject(pair);
+            this.handlers.reload();
+          },
+        }),
+      );
     }
     if (!it.match) {
-      const miss = el('span', 'awo-miss', 'Не найдено на сайте');
+      const miss = h('span', { class: 'miss', text: 'Не найдено на сайте' });
       if (it.searchUrl) {
-        miss.append(' · ');
-        const a = el('a', undefined, 'искать');
+        const a = h('a', { text: 'искать' });
         a.href = it.searchUrl;
-        miss.append(a);
+        miss.append(' · ', a);
       }
       li.append(miss);
     }
-    if (it.subtitle) li.append(el('span', 'awo-sub', it.subtitle));
+    if (it.subtitle) li.append(h('span', { class: 'sub', text: it.subtitle }));
+
+    if (this.editing && edit) {
+      const save = (order: string[], hidden: string[]) => {
+        this.user.setCustomOrder(edit.franchise, { order, hidden });
+        this.render();
+      };
+      li.append(
+        h(
+          'span',
+          { class: 'edit' },
+          h('button', { class: 'btn', text: '↑', title: 'Выше', onClick: () => save(move(edit.keys, it.watchKey, -1, edit.visibleKeys), edit.hidden) }),
+          h('button', { class: 'btn', text: '↓', title: 'Ниже', onClick: () => save(move(edit.keys, it.watchKey, 1, edit.visibleKeys), edit.hidden) }),
+          h('button', { class: 'btn', text: 'Скрыть', onClick: () => save(edit.keys, [...edit.hidden, it.watchKey]) }),
+        ),
+      );
+    }
     return li;
+  }
+
+  private exportFile() {
+    const blob = new Blob([JSON.stringify(this.user.exportData(), null, 1)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `watch-order-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+  }
+
+  private importFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        this.user.importData(JSON.parse(await file.text()) as unknown);
+        this.handlers.reload();
+      } catch (e) {
+        alert(`Импорт не удался: ${e instanceof Error ? e.message : 'ошибка'}`);
+      }
+    });
+    input.click();
   }
 }

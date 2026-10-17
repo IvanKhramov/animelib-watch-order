@@ -1,5 +1,5 @@
 import { AniListClient } from './anilistAdapter';
-import { gmKV, gmTransport } from './gm';
+import { gmKV, gmMenuCommand, gmTransport } from './gm';
 import { fetchTransport, isAbort, withRetry } from './http';
 import { createAnimego } from './sites/animego';
 import { createAnimeLib } from './sites/animelib';
@@ -48,21 +48,34 @@ function start(adapter: SiteAdapter) {
       });
   };
 
-  /** Ровно один блок, в нужном месте; на других вкладках тайтла блок убирается. */
+  const hiddenHere = () => user.prefs().hiddenSites[adapter.id] === true;
+
+  /** Ровно один блок, в нужном месте; на других вкладках тайтла и на скрытом сайте блок убирается. */
   const mount = () => {
     for (const other of document.querySelectorAll('[data-awo]')) {
       if (other !== session?.view.root) other.remove();
     }
     if (!session) return;
     const root = session.view.root;
-    const anchor = adapter.findAnchor(document);
+    const anchor = hiddenHere() ? null : adapter.findAnchor(document);
     if (!anchor) {
       root.remove();
       return;
     }
-    if (root.parentElement === anchor.parent && root.nextElementSibling === anchor.before) return;
-    anchor.parent.insertBefore(root, anchor.before);
+    if (root.parentElement !== anchor.parent || root.nextElementSibling !== anchor.before) {
+      anchor.parent.insertBefore(root, anchor.before);
+    }
+    session.view.syncTheme();
   };
+
+  const setHidden = (hidden: boolean) => {
+    const sites = { ...user.prefs().hiddenSites };
+    if (hidden) sites[adapter.id] = true;
+    else delete sites[adapter.id];
+    user.setPrefs({ hiddenSites: sites });
+    mount();
+  };
+  gmMenuCommand('Показать/скрыть «Порядок просмотра» на этом сайте', () => setHidden(!hiddenHere()));
 
   watchRoute((url) => {
     const key = adapter.pageKey(url);
@@ -74,12 +87,10 @@ function start(adapter: SiteAdapter) {
     const s: Session = {
       key,
       ctrl: new AbortController(),
-      view: new WatchOrderView(adapter, user, {
+      view: new WatchOrderView(user, {
         refresh: () => load(s, true),
-        rejectMatch: (pair) => {
-          user.reject(pair);
-          load(s, false);
-        },
+        reload: () => load(s, false),
+        hideOnSite: () => setHidden(true),
       }),
     };
     session = s;

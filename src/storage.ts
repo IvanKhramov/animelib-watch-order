@@ -1,3 +1,5 @@
+import type { CustomOrder } from './customOrder';
+
 /** Хранилище ключ-значение. В userscript это GM_getValue/GM_setValue, в тестах Map. */
 export interface KV {
   get<T>(key: string): T | undefined;
@@ -92,4 +94,67 @@ export class UserState {
   clearRejected() {
     this.kv.remove(`user:${SCHEMA}:rejected`);
   }
+
+  prefs(): Prefs {
+    const v = this.kv.get<Partial<Prefs>>(`user:${SCHEMA}:prefs`);
+    return { ...DEFAULT_PREFS, ...(v && typeof v === 'object' ? v : {}) };
+  }
+
+  setPrefs(patch: Partial<Prefs>) {
+    this.kv.set(`user:${SCHEMA}:prefs`, { ...this.prefs(), ...patch });
+  }
+
+  private orders(): Record<string, CustomOrder> {
+    const v = this.kv.get<Record<string, CustomOrder>>(`user:${SCHEMA}:orders`);
+    return v && typeof v === 'object' ? v : {};
+  }
+
+  customOrder(franchise: string): CustomOrder | undefined {
+    return this.orders()[franchise];
+  }
+
+  setCustomOrder(franchise: string, v: CustomOrder | undefined) {
+    const all = this.orders();
+    if (v && (v.order.length > 0 || v.hidden.length > 0)) all[franchise] = v;
+    else delete all[franchise];
+    this.kv.set(`user:${SCHEMA}:orders`, all);
+  }
+
+  /** Всё, что отметил пользователь, одним объектом: для переноса в другой браузер. */
+  exportData(): ExportData {
+    const data: ExportData = { format: EXPORT_FORMAT, exportedAt: new Date().toISOString() };
+    for (const name of USER_KEYS) {
+      const v = this.kv.get<unknown>(`user:${SCHEMA}:${name}`);
+      if (v !== undefined) data[name] = v;
+    }
+    return data;
+  }
+
+  /** Импорт с проверкой формата. Заменяет текущие данные целиком. */
+  importData(raw: unknown) {
+    if (!raw || typeof raw !== 'object' || (raw as ExportData).format !== EXPORT_FORMAT) {
+      throw new Error('это не файл экспорта порядка просмотра');
+    }
+    for (const name of USER_KEYS) {
+      const v = (raw as ExportData)[name];
+      if (v === undefined) this.kv.remove(`user:${SCHEMA}:${name}`);
+      else if (typeof v === 'object' && v !== null && !Array.isArray(v)) this.kv.set(`user:${SCHEMA}:${name}`, v);
+      else throw new Error(`повреждено поле ${name}`);
+    }
+  }
 }
+
+export interface Prefs {
+  view: 'main' | 'all';
+  collapsed: boolean;
+  branchesOpen: boolean;
+  /** сайты, где блок скрыт целиком (вернуть через меню менеджера скриптов) */
+  hiddenSites: Record<string, true>;
+}
+
+const DEFAULT_PREFS: Prefs = { view: 'all', collapsed: false, branchesOpen: false, hiddenSites: {} };
+
+const USER_KEYS = ['watched', 'rejected', 'prefs', 'orders'] as const;
+const EXPORT_FORMAT = 'animelib-watch-order/v1';
+
+export type ExportData = { format: string; exportedAt: string } & Partial<Record<(typeof USER_KEYS)[number], unknown>>;

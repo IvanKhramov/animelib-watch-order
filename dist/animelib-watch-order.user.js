@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
 // @namespace    https://github.com/local/animelib-watch-order
-// @version      0.1.2
+// @version      0.2.0
 // @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
 // @match        https://animelib.org/*
 // @match        https://animego.me/*
@@ -10,6 +10,7 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        GM_registerMenuCommand
 // @connect      graphql.anilist.co
 // @run-at       document-idle
 // @noframes
@@ -304,9 +305,12 @@
   };
 
   // src/gm.ts
+  function gmMenuCommand(name, fn) {
+    if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand(name, fn);
+  }
   var gmTransport = typeof GM_xmlhttpRequest === "function" ? (req) => new Promise((resolve, reject) => {
     if (req.signal?.aborted) return reject(new AbortError());
-    const h = GM_xmlhttpRequest({
+    const h2 = GM_xmlhttpRequest({
       method: req.method ?? "GET",
       url: req.url,
       headers: req.headers,
@@ -321,7 +325,7 @@
       ontimeout: () => reject(new Error("таймаут"))
     });
     req.signal?.addEventListener("abort", () => {
-      h.abort();
+      h2.abort();
       reject(new AbortError());
     }, { once: true });
   }) : fetchTransport;
@@ -453,7 +457,51 @@
     clearRejected() {
       this.kv.remove(`user:${SCHEMA}:rejected`);
     }
+    prefs() {
+      const v = this.kv.get(`user:${SCHEMA}:prefs`);
+      return { ...DEFAULT_PREFS, ...v && typeof v === "object" ? v : {} };
+    }
+    setPrefs(patch) {
+      this.kv.set(`user:${SCHEMA}:prefs`, { ...this.prefs(), ...patch });
+    }
+    orders() {
+      const v = this.kv.get(`user:${SCHEMA}:orders`);
+      return v && typeof v === "object" ? v : {};
+    }
+    customOrder(franchise) {
+      return this.orders()[franchise];
+    }
+    setCustomOrder(franchise, v) {
+      const all = this.orders();
+      if (v && (v.order.length > 0 || v.hidden.length > 0)) all[franchise] = v;
+      else delete all[franchise];
+      this.kv.set(`user:${SCHEMA}:orders`, all);
+    }
+    /** Всё, что отметил пользователь, одним объектом: для переноса в другой браузер. */
+    exportData() {
+      const data = { format: EXPORT_FORMAT, exportedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      for (const name of USER_KEYS) {
+        const v = this.kv.get(`user:${SCHEMA}:${name}`);
+        if (v !== void 0) data[name] = v;
+      }
+      return data;
+    }
+    /** Импорт с проверкой формата. Заменяет текущие данные целиком. */
+    importData(raw) {
+      if (!raw || typeof raw !== "object" || raw.format !== EXPORT_FORMAT) {
+        throw new Error("это не файл экспорта порядка просмотра");
+      }
+      for (const name of USER_KEYS) {
+        const v = raw[name];
+        if (v === void 0) this.kv.remove(`user:${SCHEMA}:${name}`);
+        else if (typeof v === "object" && v !== null && !Array.isArray(v)) this.kv.set(`user:${SCHEMA}:${name}`, v);
+        else throw new Error(`повреждено поле ${name}`);
+      }
+    }
   };
+  var DEFAULT_PREFS = { view: "all", collapsed: false, branchesOpen: false, hiddenSites: {} };
+  var USER_KEYS = ["watched", "rejected", "prefs", "orders"];
+  var EXPORT_FORMAT = "animelib-watch-order/v1";
 
   // src/sites/animego.ts
   var FORMAT_BY_LABEL = {
@@ -474,13 +522,13 @@
     return "other";
   }
   var PATH_RE = /^\/anime\/[a-z0-9-]+-\d+\/?$/;
-  function ownText(el2) {
-    return el2?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+  function ownText(el) {
+    return el?.textContent?.replace(/\s+/g, " ").trim() ?? "";
   }
   function infoValue(doc, label) {
-    for (const el2 of doc.querySelectorAll("div, dt, span")) {
-      if (el2.children.length === 0 && ownText(el2) === label) {
-        const v = ownText(el2.nextElementSibling);
+    for (const el of doc.querySelectorAll("div, dt, span")) {
+      if (el.children.length === 0 && ownText(el) === label) {
+        const v = ownText(el.nextElementSibling);
         if (v) return v;
       }
     }
@@ -564,13 +612,6 @@
         const block = [...doc.querySelectorAll(".seasons")].find((s) => ownText(s.querySelector("h2")) === "Связанное");
         if (block?.parentElement) return { parent: block.parentElement, before: block };
         return null;
-      },
-      decorate(root, heading) {
-        root.classList.add("mt-4");
-        const h2 = document.createElement("h2");
-        h2.className = "mb-2";
-        h2.append(...heading.childNodes);
-        heading.replaceWith(h2);
       },
       async loadCurrent(key, ctx) {
         return (await loadPage(key, ctx)).title;
@@ -733,25 +774,17 @@
       },
       findAnchor(doc) {
         const heads = doc.querySelectorAll(".section-title");
-        for (const h of heads) {
-          if (h.textContent?.trim() !== "Связанное") continue;
-          const section = h.closest(".section-body");
+        for (const h2 of heads) {
+          if (h2.textContent?.trim() !== "Связанное") continue;
+          const section = h2.closest(".section-body");
           if (section?.parentElement) return { parent: section.parentElement, before: section };
         }
-        for (const h of heads) {
-          if (!/^Похожее/.test(h.textContent?.trim() ?? "")) continue;
-          const section = h.closest(".section-body");
+        for (const h2 of heads) {
+          if (!/^Похожее/.test(h2.textContent?.trim() ?? "")) continue;
+          const section = h2.closest(".section-body");
           if (section?.parentElement) return { parent: section.parentElement, before: section };
         }
         return null;
-      },
-      decorate(root, heading) {
-        root.classList.add("section-body");
-        const head = document.createElement("div");
-        head.className = "media-section-head";
-        heading.classList.add("section-title", "size-sm");
-        heading.replaceWith(head);
-        head.appendChild(heading);
       },
       async loadCurrent(key, ctx) {
         try {
@@ -829,6 +862,39 @@
       clearTimeout(t);
       obs.disconnect();
     };
+  }
+
+  // src/customOrder.ts
+  function applyOrder(defaults, saved) {
+    if (!saved || saved.length === 0) return [...defaults];
+    const present = new Set(defaults);
+    const out = saved.filter((k, i) => present.has(k) && saved.indexOf(k) === i);
+    const placed = new Set(out);
+    defaults.forEach((k, i) => {
+      if (placed.has(k)) return;
+      let pos = 0;
+      for (let j = i - 1; j >= 0; j--) {
+        const at = out.indexOf(defaults[j]);
+        if (at >= 0) {
+          pos = at + 1;
+          break;
+        }
+      }
+      out.splice(pos, 0, k);
+      placed.add(k);
+    });
+    return out;
+  }
+  function move(full, key, dir, visible) {
+    const out = [...full];
+    const from = out.indexOf(key);
+    if (from < 0) return out;
+    let to = from + dir;
+    while (to >= 0 && to < out.length && !visible.has(out[to])) to += dir;
+    if (to < 0 || to >= out.length) return out;
+    out.splice(from, 1);
+    out.splice(to, 0, key);
+    return out;
   }
 
   // src/matching.ts
@@ -921,48 +987,57 @@
   }
 
   // src/ui.ts
-  var STYLE_ID = "awo-style";
   var CSS = `
-.awo{margin:0 0 20px}
-.awo-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}
-.awo-ctl{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
-.awo-btn{font:inherit;font-size:12px;line-height:18px;padding:2px 10px;border-radius:6px;cursor:pointer;color:inherit;
-  background:transparent;border:1px solid color-mix(in srgb,currentColor 25%,transparent)}
-.awo-btn:hover,.awo-btn.is-active{background:color-mix(in srgb,currentColor 14%,transparent)}
-.awo-list{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
-.awo-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;padding:6px 10px;border-radius:8px;
-  background:color-mix(in srgb,currentColor 5%,transparent)}
-.awo-row.is-current{background:color-mix(in srgb,currentColor 13%,transparent)}
-.awo-row.is-current .awo-title{font-weight:600}
-.awo-row.is-side{margin-left:18px}
-.awo-mark{all:unset;cursor:pointer;width:1.2em;text-align:center;opacity:.8;font-variant-emoji:text}
-.awo-mark:hover{opacity:1}
-.awo-num{min-width:1.6em;opacity:.6;font-variant-numeric:tabular-nums}
-.awo-title{color:inherit;text-decoration:none;overflow-wrap:anywhere}
-a.awo-title:hover{text-decoration:underline}
-.awo-sub,.awo-meta{font-size:12px;opacity:.6}
-.awo-warn{font-size:12px;color:#e0a030}
-.awo-miss{font-size:12px;opacity:.75}
-.awo-miss a{color:inherit}
-.awo-link{all:unset;cursor:pointer;font-size:12px;text-decoration:underline;opacity:.7}
-.awo-branches{margin-top:10px}
-.awo-branches summary{cursor:pointer;opacity:.8}
-.awo-notes{margin-top:8px;font-size:12px;opacity:.7}
-.awo-state{margin-top:10px;opacity:.75}
+:host{all:initial;display:block;margin:0 0 20px;color:var(--fg);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+:host([data-theme=dark]){--fg:#e8e8ea;--muted:#a1a1aa;--row:rgba(255,255,255,.05);--row-hi:rgba(255,255,255,.12);
+  --line:rgba(255,255,255,.16);--accent:#8b7cf6;--warn:#e3a33b;--panel:#232327;--shadow:rgba(0,0,0,.5)}
+:host([data-theme=light]){--fg:#1d1d1f;--muted:#6b6b73;--row:rgba(0,0,0,.04);--row-hi:rgba(0,0,0,.09);
+  --line:rgba(0,0,0,.15);--accent:#6a4ff0;--warn:#a85f00;--panel:#fff;--shadow:rgba(0,0,0,.18)}
+*{box-sizing:border-box}
+button{font:inherit;color:inherit}
+.head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px}
+.toggle{all:unset;cursor:pointer;display:flex;align-items:center;gap:8px;min-width:0}
+.chev{display:inline-block;width:1em;text-align:center;color:var(--muted);transition:transform .15s}
+.collapsed .chev{transform:rotate(-90deg)}
+h2{margin:0;font-size:18px;font-weight:600;line-height:1.3}
+.sum{font-size:12px;color:var(--muted)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto;position:relative}
+.btn{font-size:12px;line-height:18px;padding:3px 10px;border-radius:6px;cursor:pointer;background:transparent;
+  border:1px solid var(--line)}
+.btn:hover,.btn.on{background:var(--row-hi)}
+.seg{display:inline-flex}
+.seg .btn{border-radius:0}
+.seg .btn:first-child{border-radius:6px 0 0 6px}
+.seg .btn:last-child{border-radius:0 6px 6px 0;border-left:0}
+.menu{position:absolute;right:0;top:calc(100% + 4px);z-index:20;min-width:220px;padding:4px;border-radius:8px;
+  background:var(--panel);border:1px solid var(--line);box-shadow:0 8px 24px var(--shadow)}
+.menu button{all:unset;display:block;width:100%;box-sizing:border-box;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:13px}
+.menu button:hover{background:var(--row-hi)}
+ol{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+li{display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding:6px 10px;border-radius:8px;background:var(--row)}
+li.cur{background:var(--row-hi);box-shadow:inset 3px 0 0 var(--accent)}
+li.cur .title{font-weight:600}
+li.side{margin-left:20px}
+li.done .title{color:var(--muted)}
+.mark{all:unset;cursor:pointer;width:1.3em;text-align:center;color:var(--muted)}
+.mark:hover{color:var(--fg)}
+li.done .mark{color:var(--accent)}
+.num{min-width:1.5em;color:var(--muted);font-variant-numeric:tabular-nums}
+.title{color:inherit;text-decoration:none;overflow-wrap:anywhere}
+a.title:hover{text-decoration:underline}
+.meta,.sub{font-size:12px;color:var(--muted)}
+.warn{font-size:12px;color:var(--warn)}
+.miss{font-size:12px;color:var(--muted)}
+.miss a{color:inherit}
+.link{all:unset;cursor:pointer;font-size:12px;text-decoration:underline;color:var(--muted)}
+.edit{display:flex;gap:4px;margin-left:auto}
+.edit .btn{padding:1px 8px}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--muted)}
+.note{margin-top:8px;font-size:12px;color:var(--muted)}
+.state{margin-top:10px;color:var(--muted)}
 `;
-  function ensureStyle(doc) {
-    if (doc.getElementById(STYLE_ID)) return;
-    const s = doc.createElement("style");
-    s.id = STYLE_ID;
-    s.textContent = CSS;
-    doc.head.appendChild(s);
-  }
-  function el(tag, cls, text) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text !== void 0) e.textContent = text;
-    return e;
-  }
   var KIND_LABEL = {
     main: "",
     extra: "Дополнительно",
@@ -972,125 +1047,339 @@ a.awo-title:hover{text-decoration:underline}
     other: "Другое"
   };
   var yearOf = (d) => d?.year ? String(d.year) : void 0;
+  function h(tag, props = {}, ...children) {
+    const e = document.createElement(tag);
+    if (props.class) e.className = props.class;
+    if (props.text !== void 0) e.textContent = props.text;
+    if (props.title) e.title = props.title;
+    if (props.onClick) {
+      const fn = props.onClick;
+      e.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        fn();
+      });
+    }
+    if (e instanceof HTMLButtonElement) e.type = "button";
+    for (const c of children) if (c) e.append(c);
+    return e;
+  }
+  function isDarkBackground(start2) {
+    for (let el = start2; el; el = el.parentElement) {
+      const m = getComputedStyle(el).backgroundColor.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
+      if (!m || m[4] !== void 0 && Number(m[4]) < 0.5) continue;
+      const [r, g, b] = [m[1], m[2], m[3]].map(Number);
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+    }
+    return matchMedia("(prefers-color-scheme: dark)").matches;
+  }
   var WatchOrderView = class {
-    constructor(adapter, user, handlers) {
-      this.adapter = adapter;
+    constructor(user, handlers) {
       this.user = user;
       this.handlers = handlers;
-      this.view = "all";
       this.state = { status: "loading" };
-      ensureStyle(document);
-      this.root = el("section", "awo");
+      this.editing = false;
+      this.menuOpen = false;
+      this.root = document.createElement("div");
       this.root.dataset.awo = "1";
+      this.root.dataset.theme = "dark";
+      const shadow = this.root.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = CSS;
+      this.box = document.createElement("div");
+      shadow.append(style, this.box);
       this.render();
     }
     set(state) {
       this.state = state;
+      this.root.dataset.status = state.status;
       this.render();
     }
+    /** Подстроить тему под фон страницы; зовётся при каждом монтировании. */
+    syncTheme() {
+      const theme = isDarkBackground(this.root.parentElement) ? "dark" : "light";
+      if (this.root.dataset.theme !== theme) this.root.dataset.theme = theme;
+    }
+    result() {
+      return this.state.status === "ready" ? this.state.result : void 0;
+    }
+    /** Элементы основного списка с учётом своего порядка, скрытых и режима. */
+    arranged(res) {
+      const prefs = this.user.prefs();
+      const custom = this.user.customOrder(res.franchiseKey);
+      const byKey = new Map(res.items.map((i) => [i.watchKey, i]));
+      const keys = applyOrder(res.items.map((i) => i.watchKey), custom?.order);
+      const hidden = new Set(custom?.hidden ?? []);
+      const all = keys.map((k) => byKey.get(k));
+      const showAll = prefs.view === "all" || res.mode !== "anilist";
+      const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === "main" || i.isCurrent));
+      return { keys, all, visible, hiddenItems: all.filter((i) => hidden.has(i.watchKey)), custom };
+    }
     render() {
-      const r = this.root;
-      r.replaceChildren();
-      const heading = el("div", "awo-heading", "Порядок просмотра");
-      const head = el("div", "awo-head");
-      head.append(heading);
-      const ctl = el("div", "awo-ctl");
-      const ready = this.state.status === "ready" ? this.state.result : void 0;
-      if (ready?.mode === "anilist") {
-        for (const [v, label] of [["main", "Основное"], ["all", "Всё"]]) {
-          const b = el("button", "awo-btn" + (this.view === v ? " is-active" : ""), label);
-          b.type = "button";
-          b.addEventListener("click", () => {
-            this.view = v;
+      const prefs = this.user.prefs();
+      const res = this.result();
+      const wrap = h("div", { class: prefs.collapsed ? "collapsed" : "" });
+      wrap.append(this.header(res));
+      if (!prefs.collapsed) wrap.append(...this.body(res));
+      this.box.replaceChildren(wrap);
+    }
+    header(res) {
+      const prefs = this.user.prefs();
+      const toggle = h(
+        "button",
+        {
+          class: "toggle",
+          title: prefs.collapsed ? "Развернуть" : "Свернуть",
+          onClick: () => {
+            this.user.setPrefs({ collapsed: !prefs.collapsed });
             this.render();
-          });
-          ctl.append(b);
+          }
+        },
+        h("span", { class: "chev", text: "▾" }),
+        h("h2", { text: "Порядок просмотра" })
+      );
+      const head = h("div", { class: "head" }, toggle);
+      if (res) head.append(h("span", { class: "sum", text: this.summary(res) }));
+      if (prefs.collapsed) return head;
+      const ctl = h("div", { class: "ctl" });
+      if (res?.mode === "anilist") {
+        const seg = h("span", { class: "seg" });
+        for (const [v, label] of [["main", "Основное"], ["all", "Всё"]]) {
+          seg.append(
+            h("button", {
+              class: "btn" + (prefs.view === v ? " on" : ""),
+              text: label,
+              onClick: () => {
+                this.user.setPrefs({ view: v });
+                this.render();
+              }
+            })
+          );
         }
+        ctl.append(seg);
       }
-      const refresh = el("button", "awo-btn", "Обновить");
-      refresh.type = "button";
-      refresh.title = "Загрузить данные заново, без кэша";
-      refresh.addEventListener("click", () => this.handlers.refresh());
-      ctl.append(refresh);
+      if (res) {
+        ctl.append(
+          h("button", {
+            class: "btn" + (this.editing ? " on" : ""),
+            text: this.editing ? "Готово" : "Править",
+            title: "Поменять порядок и скрыть лишнее",
+            onClick: () => {
+              this.editing = !this.editing;
+              this.render();
+            }
+          })
+        );
+      }
+      ctl.append(h("button", { class: "btn", text: "Обновить", title: "Загрузить данные заново, без кэша", onClick: () => this.handlers.refresh() }));
+      ctl.append(
+        h("button", {
+          class: "btn" + (this.menuOpen ? " on" : ""),
+          text: "⋯",
+          title: "Ещё",
+          onClick: () => {
+            this.menuOpen = !this.menuOpen;
+            this.render();
+          }
+        })
+      );
+      if (this.menuOpen) ctl.append(this.menu(res));
       head.append(ctl);
-      r.append(head);
-      this.adapter.decorate?.(r, heading);
-      if (this.state.status === "loading") {
-        r.append(el("div", "awo-state", "Загружаю связи франшизы…"));
-        return;
+      return head;
+    }
+    menu(res) {
+      const close = (fn) => () => {
+        this.menuOpen = false;
+        fn();
+        this.render();
+      };
+      const m = h("div", { class: "menu" });
+      m.append(h("button", { text: "Экспорт отметок в файл", onClick: close(() => this.exportFile()) }));
+      m.append(h("button", { text: "Импорт отметок из файла", onClick: close(() => this.importFile()) }));
+      if (res && this.user.customOrder(res.franchiseKey)) {
+        m.append(
+          h("button", {
+            text: "Сбросить свой порядок для франшизы",
+            onClick: close(() => this.user.setCustomOrder(res.franchiseKey, void 0))
+          })
+        );
       }
-      if (this.state.status === "error") {
-        r.append(el("div", "awo-state", `Порядок не определён: ${this.state.message}`));
-        return;
+      m.append(h("button", { text: "Скрыть блок на этом сайте", onClick: close(() => this.handlers.hideOnSite()) }));
+      return m;
+    }
+    summary(res) {
+      const { visible } = this.arranged(res);
+      const main = visible.filter((i) => i.kind === "main");
+      const watched = main.filter((i) => this.user.isWatched(i.watchKey)).length;
+      const pos = main.findIndex((i) => i.isCurrent);
+      const parts = [];
+      if (pos >= 0 && res.mode === "anilist") parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
+      if (watched > 0) parts.push(`просмотрено ${watched} из ${main.length}`);
+      if (this.user.prefs().collapsed) {
+        const next = main.find((i, n) => n > pos && !this.user.isWatched(i.watchKey));
+        if (next && pos >= 0) parts.push(`дальше: ${next.title}`);
       }
-      const res = this.state.result;
-      const items = this.view === "main" && res.mode === "anilist" ? res.items.filter((i) => i.kind === "main") : res.items;
-      if (items.length === 0) {
-        r.append(el("div", "awo-state", "Порядок не определён."));
+      return parts.join(" · ");
+    }
+    body(res) {
+      if (this.state.status === "loading") return [h("div", { class: "state", text: "Загружаю связи франшизы…" })];
+      if (this.state.status === "error") return [h("div", { class: "state", text: `Порядок не определён: ${this.state.message}` })];
+      if (!res) return [];
+      const out = [];
+      const { keys, visible, hiddenItems, custom } = this.arranged(res);
+      if (visible.length === 0) {
+        out.push(h("div", { class: "state", text: "Порядок не определён." }));
       } else {
-        const list = el("ol", "awo-list");
-        for (const it of items) list.append(this.row(it));
-        r.append(list);
+        const list = h("ol");
+        const visibleKeys = new Set(visible.map((i) => i.watchKey));
+        let n = 0;
+        for (const it of visible) {
+          const index = res.mode === "anilist" && it.kind === "main" ? ++n : void 0;
+          list.append(this.row(it, index, { keys, visibleKeys, franchise: res.franchiseKey, hidden: custom?.hidden ?? [] }));
+        }
+        out.push(list);
+      }
+      if (this.editing && hiddenItems.length > 0) {
+        const d = h("details");
+        d.open = true;
+        d.append(h("summary", { text: `Скрытые (${hiddenItems.length})` }));
+        const list = h("ol");
+        for (const it of hiddenItems) {
+          list.append(
+            h(
+              "li",
+              {},
+              h("span", { class: "title", text: it.title }),
+              h("span", { class: "meta", text: [it.formatLabel, yearOf(it.date)].filter(Boolean).join(" · ") }),
+              h(
+                "span",
+                { class: "edit" },
+                h("button", {
+                  class: "btn",
+                  text: "Вернуть",
+                  onClick: () => {
+                    const hidden = (custom?.hidden ?? []).filter((k) => k !== it.watchKey);
+                    this.user.setCustomOrder(res.franchiseKey, { order: custom?.order ?? [], hidden });
+                    this.render();
+                  }
+                })
+              )
+            )
+          );
+        }
+        d.append(list);
+        out.push(d);
       }
       if (res.branches.length > 0) {
-        const d = el("details", "awo-branches");
-        d.append(el("summary", void 0, `Альтернативы и прочее (${res.branches.length})`));
-        const list = el("ol", "awo-list");
-        for (const it of res.branches) list.append(this.row(it));
+        const d = h("details");
+        d.open = this.user.prefs().branchesOpen;
+        d.addEventListener("toggle", () => this.user.setPrefs({ branchesOpen: d.open }));
+        d.append(h("summary", { text: `Альтернативы и прочее (${res.branches.length})` }));
+        const list = h("ol");
+        for (const it of res.branches) list.append(this.row(it, void 0));
         d.append(list);
-        r.append(d);
+        out.push(d);
       }
       const notes = [...res.notes];
       if (res.mode === "anilist") notes.push("Рекомендованный порядок по связям и датам выхода AniList, не каноническая хронология.");
-      r.append(el("div", "awo-notes", notes.join(" ")));
+      if (custom) notes.push("Порядок изменён вами.");
+      out.push(h("div", { class: "note", text: notes.join(" ") }));
+      return out;
     }
-    row(it) {
-      const li = el("li", "awo-row");
-      if (it.isCurrent) li.classList.add("is-current");
-      if (it.kind !== "main" && this.view === "all" && it.kind !== "other") li.classList.add("is-side");
+    row(it, index, edit) {
       const watched = this.user.isWatched(it.watchKey);
-      const mark2 = el("button", "awo-mark", it.isCurrent ? "▶︎" : watched ? "✓" : it.kind === "main" ? "○" : "◇");
-      mark2.type = "button";
-      mark2.title = watched ? "Снять отметку «просмотрено»" : "Отметить просмотренным";
-      mark2.addEventListener("click", () => {
-        this.user.setWatched(it.watchKey, !watched);
-        this.render();
-      });
-      li.append(mark2);
-      li.append(el("span", "awo-num", it.index !== void 0 ? String(it.index) : ""));
+      const li = h("li");
+      if (it.isCurrent) li.classList.add("cur");
+      if (watched) li.classList.add("done");
+      if (edit && it.kind !== "main") li.classList.add("side");
+      li.append(
+        h("button", {
+          class: "mark",
+          text: watched ? "✓" : it.isCurrent ? "▶︎" : it.kind === "main" ? "○" : "◇",
+          title: watched ? "Снять отметку «просмотрено»" : "Отметить просмотренным",
+          onClick: () => {
+            this.user.setWatched(it.watchKey, !watched);
+            this.render();
+          }
+        })
+      );
+      li.append(h("span", { class: "num", text: index !== void 0 ? String(index) : "" }));
       const url = it.match?.title.url;
       if (url && !it.isCurrent) {
-        const a = el("a", "awo-title", it.title);
+        const a = h("a", { class: "title", text: it.title });
         a.href = url;
         li.append(a);
       } else {
-        li.append(el("span", "awo-title", it.title));
+        li.append(h("span", { class: "title", text: it.title }));
       }
-      const meta = [it.formatLabel, yearOf(it.date), KIND_LABEL[it.kind], it.isCurrent ? "Вы здесь" : "", watched && it.isCurrent ? "просмотрено" : ""].filter(Boolean).join(" · ");
-      if (meta) li.append(el("span", "awo-meta", meta));
-      for (const f of it.flags) li.append(el("span", "awo-warn", f));
+      const meta = [it.formatLabel, yearOf(it.date), KIND_LABEL[it.kind], it.isCurrent ? "вы здесь" : ""].filter(Boolean).join(" · ");
+      if (meta) li.append(h("span", { class: "meta", text: meta }));
+      for (const f of it.flags) li.append(h("span", { class: "warn", text: f }));
       const conf = it.match?.confidence;
       if (!it.isCurrent && it.alId !== void 0 && it.match && (conf === "name" || conf === "date")) {
-        li.append(el("span", "awo-warn", conf === "name" ? "≈ по названию" : "≈ по дате выхода"));
-        const no = el("button", "awo-link", "не то");
-        no.type = "button";
-        no.title = "Убрать это сопоставление";
+        li.append(h("span", { class: "warn", text: conf === "name" ? "≈ по названию" : "≈ по дате выхода" }));
         const pair = pairKey(it.alId, it.match.title.key);
-        no.addEventListener("click", () => this.handlers.rejectMatch(pair));
-        li.append(no);
+        li.append(
+          h("button", {
+            class: "link",
+            text: "не то",
+            title: "Убрать это сопоставление",
+            onClick: () => {
+              this.user.reject(pair);
+              this.handlers.reload();
+            }
+          })
+        );
       }
       if (!it.match) {
-        const miss = el("span", "awo-miss", "Не найдено на сайте");
+        const miss = h("span", { class: "miss", text: "Не найдено на сайте" });
         if (it.searchUrl) {
-          miss.append(" · ");
-          const a = el("a", void 0, "искать");
+          const a = h("a", { text: "искать" });
           a.href = it.searchUrl;
-          miss.append(a);
+          miss.append(" · ", a);
         }
         li.append(miss);
       }
-      if (it.subtitle) li.append(el("span", "awo-sub", it.subtitle));
+      if (it.subtitle) li.append(h("span", { class: "sub", text: it.subtitle }));
+      if (this.editing && edit) {
+        const save = (order, hidden) => {
+          this.user.setCustomOrder(edit.franchise, { order, hidden });
+          this.render();
+        };
+        li.append(
+          h(
+            "span",
+            { class: "edit" },
+            h("button", { class: "btn", text: "↑", title: "Выше", onClick: () => save(move(edit.keys, it.watchKey, -1, edit.visibleKeys), edit.hidden) }),
+            h("button", { class: "btn", text: "↓", title: "Ниже", onClick: () => save(move(edit.keys, it.watchKey, 1, edit.visibleKeys), edit.hidden) }),
+            h("button", { class: "btn", text: "Скрыть", onClick: () => save(edit.keys, [...edit.hidden, it.watchKey]) })
+          )
+        );
+      }
       return li;
+    }
+    exportFile() {
+      const blob = new Blob([JSON.stringify(this.user.exportData(), null, 1)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `watch-order-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1e4);
+    }
+    importFile() {
+      const input = document.createElement("input");
+      input.type = "file";
+      input.accept = "application/json,.json";
+      input.addEventListener("change", async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          this.user.importData(JSON.parse(await file.text()));
+          this.handlers.reload();
+        } catch (e) {
+          alert(`Импорт не удался: ${e instanceof Error ? e.message : "ошибка"}`);
+        }
+      });
+      input.click();
     }
   };
 
@@ -1381,6 +1670,7 @@ a.awo-title:hover{text-decoration:underline}
     const rest = related.filter((t) => t.relationKind !== "prequel" && t.relationKind !== "sequel").sort(byDate2);
     return {
       mode: "site-only",
+      franchiseKey: `site:${adapter.id}:${current.key}`,
       items: [...pre.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
       branches: rest.map((t) => ({ ...item(t, false), kind: "other" })),
       notes: [...notes, "Порядок собран только по связям сайта, без дат выхода: может быть неточным."]
@@ -1443,6 +1733,8 @@ a.awo-title:hover{text-decoration:underline}
     }));
     return {
       mode: "anilist",
+      // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
+      franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
       items: ordering.all.map((n) => toItem(n, g, matches, adapter)),
       branches: [...ordering.branches.map((n) => toItem(n, g, matches, adapter)), ...orphans],
       notes
@@ -1477,20 +1769,31 @@ a.awo-title:hover{text-decoration:underline}
         s.view.set({ status: "error", message: e instanceof Error ? e.message : "ошибка загрузки" });
       });
     };
+    const hiddenHere = () => user.prefs().hiddenSites[adapter.id] === true;
     const mount = () => {
       for (const other of document.querySelectorAll("[data-awo]")) {
         if (other !== session?.view.root) other.remove();
       }
       if (!session) return;
       const root = session.view.root;
-      const anchor = adapter.findAnchor(document);
+      const anchor = hiddenHere() ? null : adapter.findAnchor(document);
       if (!anchor) {
         root.remove();
         return;
       }
-      if (root.parentElement === anchor.parent && root.nextElementSibling === anchor.before) return;
-      anchor.parent.insertBefore(root, anchor.before);
+      if (root.parentElement !== anchor.parent || root.nextElementSibling !== anchor.before) {
+        anchor.parent.insertBefore(root, anchor.before);
+      }
+      session.view.syncTheme();
     };
+    const setHidden = (hidden) => {
+      const sites = { ...user.prefs().hiddenSites };
+      if (hidden) sites[adapter.id] = true;
+      else delete sites[adapter.id];
+      user.setPrefs({ hiddenSites: sites });
+      mount();
+    };
+    gmMenuCommand("Показать/скрыть «Порядок просмотра» на этом сайте", () => setHidden(!hiddenHere()));
     watchRoute((url) => {
       const key = adapter.pageKey(url);
       if (session?.key === key) return;
@@ -1501,12 +1804,10 @@ a.awo-title:hover{text-decoration:underline}
       const s = {
         key,
         ctrl: new AbortController(),
-        view: new WatchOrderView(adapter, user, {
+        view: new WatchOrderView(user, {
           refresh: () => load(s, true),
-          rejectMatch: (pair) => {
-            user.reject(pair);
-            load(s, false);
-          }
+          reload: () => load(s, false),
+          hideOnSite: () => setHidden(true)
         })
       };
       session = s;

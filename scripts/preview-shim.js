@@ -15,8 +15,10 @@
     return { abort: () => c.abort() };
   };
   document.addEventListener('click', (e) => {
-    const a = e.target instanceof Element ? e.target.closest('[data-awo] a[href]') : null;
-    if (!a || a.origin !== location.origin || e.ctrlKey || e.metaKey || e.button !== 0) return;
+    // блок в Shadow DOM: настоящую ссылку берём из composedPath
+    const a = e.composedPath().find((n) => n instanceof HTMLAnchorElement && n.href);
+    if (!a || !e.composedPath().some((n) => n instanceof Element && n.hasAttribute('data-awo'))) return;
+    if (a.origin !== location.origin || e.ctrlKey || e.metaKey || e.button !== 0) return;
     e.preventDefault();
     if (window.Turbo?.visit) return window.Turbo.visit(a.href);
     history.pushState(history.state, '', a.pathname + a.search);

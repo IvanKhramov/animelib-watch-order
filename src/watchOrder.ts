@@ -158,6 +158,7 @@ function siteOnly(current: SiteTitle, related: SiteTitle[], adapter: SiteAdapter
   const rest = related.filter((t) => t.relationKind !== 'prequel' && t.relationKind !== 'sequel').sort(byDate);
   return {
     mode: 'site-only',
+    franchiseKey: `site:${adapter.id}:${current.key}`,
     items: [...pre.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
     branches: rest.map((t) => ({ ...item(t, false), kind: 'other' as const })),
     notes: [...notes, 'Порядок собран только по связям сайта, без дат выхода: может быть неточным.'],
@@ -234,6 +235,8 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
 
   return {
     mode: 'anilist',
+    // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
+    franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
     items: ordering.all.map((n) => toItem(n, g, matches, adapter)),
     branches: [...ordering.branches.map((n) => toItem(n, g, matches, adapter)), ...orphans],
     notes,

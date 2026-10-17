@@ -108,6 +108,8 @@ export interface OrderItem {
 
 export interface OrderResult {
   mode: 'anilist' | 'site-only';
+  /** ключ, под которым хранится пользовательский порядок франшизы */
+  franchiseKey: string;
   /** основная линия + дополнительное (в режиме «Всё») по порядку */
   items: OrderItem[];
   /** альтернативы, спин-оффы и прочее */

@@ -16,6 +16,7 @@ const header = `// ==UserScript==
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
+// @grant        GM_registerMenuCommand
 // @connect      graphql.anilist.co
 // @run-at       document-idle
 // @noframes
