@@ -37,6 +37,7 @@ describe('UserState', () => {
   it('помнит настройки, отметки и свой порядок', () => {
     const u = new UserState(memoryKV());
     expect(u.prefs().view).toBe('all');
+    expect(u.prefs().orderMode).toBe('recommended');
     u.setPrefs({ collapsed: true });
     u.setPrefs({ view: 'main' });
     expect(u.prefs()).toMatchObject({ collapsed: true, view: 'main' });
@@ -50,7 +51,7 @@ describe('UserState', () => {
   it('экспорт и импорт переносят всё в другой браузер', () => {
     const a = new UserState(memoryKV());
     a.setWatched('al:5', true);
-    a.setPrefs({ view: 'main' });
+    a.setPrefs({ view: 'main', orderMode: 'chronological' });
     a.setCustomOrder('al:1', { order: ['al:2'], hidden: ['al:3'] });
     const dump = JSON.parse(JSON.stringify(a.exportData())) as unknown;
 
@@ -60,6 +61,7 @@ describe('UserState', () => {
     expect(b.isWatched('al:5')).toBe(true);
     expect(b.isWatched('al:9')).toBe(false);
     expect(b.prefs().view).toBe('main');
+    expect(b.prefs().orderMode).toBe('chronological');
     expect(b.customOrder('al:1')?.hidden).toEqual(['al:3']);
   });
 
@@ -67,6 +69,7 @@ describe('UserState', () => {
     { watched: { 'al:2': false } },
     { rejected: { pair: 'true' } },
     { prefs: { view: 'other' } },
+    { prefs: { orderMode: 'other' } },
     { prefs: { collapsed: 'yes' } },
     { prefs: { branchesOpen: 1 } },
     { prefs: { covers: null } },

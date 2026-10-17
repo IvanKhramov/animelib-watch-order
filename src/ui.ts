@@ -1,5 +1,6 @@
 import { applyOrder, move } from './customOrder';
 import { pairKey } from './matching';
+import { MODE_LABELS, rowKey, selectOrder, type ModeResult } from './orderModes';
 import type { UserState } from './storage';
 import type { FuzzyDate, ItemKind, OrderItem, OrderResult } from './types';
 
@@ -36,6 +37,14 @@ h2{margin:0;font-size:18px;font-weight:600;line-height:1.3}
 .btn{font-size:12px;line-height:18px;padding:3px 10px;border-radius:6px;cursor:pointer;background:transparent;
   border:1px solid var(--line)}
 .btn:hover,.btn.on{background:var(--row-hi)}
+.btn:disabled{opacity:.5;cursor:default;background:transparent}
+button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.order-modes{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.order-info{margin:8px 0;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.order-info strong{color:var(--fg);font-weight:500}
+.sources{font-size:12px;margin:6px 0}
+.sources a{color:var(--accent)}
+.sources ul{margin:6px 0;padding-left:20px}
 .seg{display:inline-flex}
 .seg .btn{border-radius:0}
 .seg .btn:first-child{border-radius:6px 0 0 6px}
@@ -181,21 +190,28 @@ export class WatchOrderView {
     if (this.root.dataset.theme !== theme) this.root.dataset.theme = theme;
   }
 
-  private result(): OrderResult | undefined {
-    return this.state.status === 'ready' ? this.state.result : undefined;
+  private result(): ModeResult | undefined {
+    return this.state.status === 'ready' ? selectOrder(this.state.result, this.user.prefs().orderMode) : undefined;
+  }
+
+  private custom(res: ModeResult) {
+    return this.user.customOrder(res.orderKey) ?? res.legacyOrderKeys.map((key) => this.user.customOrder(key)).find(Boolean);
   }
 
   /** Элементы основного списка с учётом своего порядка, скрытых и режима. */
-  private arranged(res: OrderResult) {
+  private arranged(res: ModeResult) {
     const prefs = this.user.prefs();
-    const custom = this.user.customOrder(res.franchiseKey);
-    const byKey = new Map(res.items.map((i) => [i.watchKey, i]));
-    const keys = applyOrder(res.items.map((i) => i.watchKey), custom?.order);
+    const custom = this.custom(res);
+    const byKey = new Map(res.items.map((i) => [rowKey(i), i]));
+    // Старые порядки хранят ключ тайтла; диапазоны серий сохраняют его отметку.
+    const saved = custom?.order.flatMap((key) => byKey.has(key) ? [key] : res.items.filter((i) => i.watchKey === key).map(rowKey));
+    const keys = applyOrder(res.items.map(rowKey), saved);
     const hidden = new Set(custom?.hidden ?? []);
     const all = keys.map((k) => byKey.get(k)!);
     const showAll = prefs.view === 'all' || res.mode !== 'anilist';
-    const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === 'main' || (i.isCurrent && i.kind !== 'recap')));
-    return { keys, all, visible, hiddenItems: all.filter((i) => hidden.has(i.watchKey)), custom };
+    const isHidden = (i: OrderItem) => hidden.has(rowKey(i)) || hidden.has(i.watchKey);
+    const visible = all.filter((i) => !isHidden(i) && (showAll || i.kind === 'main' || (i.isCurrent && i.kind !== 'recap')));
+    return { keys, all, visible, hiddenItems: all.filter(isHidden), custom };
   }
 
   private render() {
@@ -207,7 +223,7 @@ export class WatchOrderView {
     this.box.replaceChildren(wrap);
   }
 
-  private header(res: OrderResult | undefined): HTMLElement {
+  private header(res: ModeResult | undefined): HTMLElement {
     const prefs = this.user.prefs();
     const toggle = h(
       'button',
@@ -284,7 +300,7 @@ export class WatchOrderView {
     return head;
   }
 
-  private menu(res: OrderResult | undefined): HTMLElement {
+  private menu(res: ModeResult | undefined): HTMLElement {
     const close = (fn: () => void) => () => {
       this.menuOpen = false;
       fn();
@@ -293,11 +309,14 @@ export class WatchOrderView {
     const m = h('div', { class: 'menu' });
     m.append(h('button', { text: 'Экспорт отметок в файл', onClick: close(() => this.exportFile()) }));
     m.append(h('button', { text: 'Импорт отметок из файла', onClick: close(() => this.importFile()) }));
-    if (res && this.user.customOrder(res.franchiseKey)) {
+    if (res && this.custom(res)) {
       m.append(
         h('button', {
-          text: 'Сбросить свой порядок для франшизы',
-          onClick: close(() => this.user.setCustomOrder(res.franchiseKey, undefined)),
+          text: 'Сбросить правки текущего режима',
+          onClick: close(() => {
+            this.user.setCustomOrder(res.orderKey, undefined);
+            for (const key of res.legacyOrderKeys) this.user.setCustomOrder(key, undefined);
+          }),
         }),
       );
     }
@@ -305,37 +324,87 @@ export class WatchOrderView {
     return m;
   }
 
-  private summary(res: OrderResult): string {
+  private summary(res: ModeResult): string {
     const { visible } = this.arranged(res);
     const main = visible.filter((i) => i.kind === 'main' && !i.continuation);
     const watched = main.filter((i) => this.user.isWatched(i.watchKey)).length;
     const current = visible.find((i) => i.isCurrent);
+    const repeatedCurrent = main.filter((i) => i.isCurrent).length > 1;
     const pos = main.findIndex((i) => i.isCurrent || (current?.continuation && i.alId === current.alId));
     const parts: string[] = [];
-    if (pos >= 0 && res.mode === 'anilist') parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
+    if (repeatedCurrent) parts.push('текущий тайтл встречается в нескольких шагах');
+    else if (pos >= 0 && res.mode === 'anilist') parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
     if (watched > 0) parts.push(`просмотрено ${watched} из ${main.length}`);
     if (this.user.prefs().collapsed) {
       const next = main.find((i, n) => n > pos && !this.user.isWatched(i.watchKey));
-      if (next && pos >= 0) parts.push(`дальше: ${next.title}`);
+      if (next && pos >= 0 && !repeatedCurrent) parts.push(`дальше: ${next.title}`);
     }
     return parts.join(' · ');
   }
 
-  private body(res: OrderResult | undefined): HTMLElement[] {
+  private modeControls(res: ModeResult): HTMLElement[] {
+    const controls = h('div', { class: 'order-modes' });
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Порядок просмотра');
+    const chronology = this.state.status === 'ready' ? selectOrder(this.state.result, 'chronological') : undefined;
+    for (const mode of ['recommended', 'release', 'chronological'] as const) {
+      const button = h('button', {
+        class: 'btn' + (res.selectedMode === mode ? ' on' : ''),
+        text: MODE_LABELS[mode],
+        title: mode === 'chronological' && !chronology?.available ? chronology?.explanation : MODE_LABELS[mode],
+        onClick: () => {
+          this.user.setPrefs({ orderMode: mode });
+          this.editing = false;
+          this.render();
+          this.box.querySelector<HTMLButtonElement>(`[data-mode="${mode}"]`)?.focus();
+        },
+      });
+      button.dataset.mode = mode;
+      button.setAttribute('aria-pressed', String(res.selectedMode === mode));
+      button.disabled = mode === 'chronological' && !chronology?.available;
+      controls.append(button);
+    }
+    const info = h('div', { class: 'order-info' },
+      h('strong', { text: this.custom(res) ? 'Порядок с вашими правками. ' : res.verified ? 'Проверенный маршрут. ' : '' }), res.explanation);
+    info.setAttribute('aria-live', 'polite');
+    const out: HTMLElement[] = [controls, info];
+    if (res.selectedMode !== 'chronological' && !chronology?.available) {
+      out.push(h('div', { class: 'note', text: `По событиям: ${chronology?.explanation}` }));
+    }
+    if (res.sources.length) {
+      const details = h('details', { class: 'sources' });
+      details.append(h('summary', { text: 'Источники и пояснения' }));
+      const list = h('ul');
+      for (const source of res.sources) {
+        if (!source.url.startsWith('https://')) continue;
+        const link = h('a', { text: source.label });
+        link.href = source.url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        list.append(h('li', {}, link, source.detail ? h('span', { class: 'meta', text: source.detail }) : undefined));
+      }
+      details.append(list);
+      for (const limitation of res.profile?.limitations ?? []) details.append(h('p', { text: limitation }));
+      out.push(details);
+    }
+    return out;
+  }
+
+  private body(res: ModeResult | undefined): HTMLElement[] {
     if (this.state.status === 'loading') return [h('div', { class: 'state', text: 'Загружаю связи франшизы…' })];
     if (this.state.status === 'error') return [h('div', { class: 'state', text: `Порядок не определён: ${this.state.message}` })];
     if (!res) return [];
-    const out: HTMLElement[] = [];
+    const out: HTMLElement[] = this.modeControls(res);
     const { keys, visible, hiddenItems, custom } = this.arranged(res);
     if (visible.length === 0) {
       out.push(h('div', { class: 'state', text: 'Порядок не определён.' }));
     } else {
       const list = h('ol');
-      const visibleKeys = new Set(visible.map((i) => i.watchKey));
+      const visibleKeys = new Set(visible.map(rowKey));
       let n = 0;
       for (const it of visible) {
         const index = res.mode === 'anilist' && it.kind === 'main' && !it.continuation ? ++n : undefined;
-        list.append(this.row(it, index, { keys, visibleKeys, franchise: res.franchiseKey, hidden: custom?.hidden ?? [] }));
+        list.append(this.row(it, index, { keys, visibleKeys, franchise: res.orderKey, hidden: custom?.hidden ?? [] }));
       }
       out.push(list);
     }
@@ -358,8 +427,8 @@ export class WatchOrderView {
                 class: 'btn',
                 text: 'Вернуть',
                 onClick: () => {
-                  const hidden = (custom?.hidden ?? []).filter((k) => k !== it.watchKey);
-                  this.user.setCustomOrder(res.franchiseKey, { order: custom?.order ?? [], hidden });
+                  const hidden = (custom?.hidden ?? []).filter((k) => k !== rowKey(it) && k !== it.watchKey);
+                  this.user.setCustomOrder(res.orderKey, { order: custom?.order ?? [], hidden });
                   this.render();
                 },
               }),
@@ -374,15 +443,14 @@ export class WatchOrderView {
       const d = h('details');
       d.open = this.user.prefs().branchesOpen;
       d.addEventListener('toggle', () => this.user.setPrefs({ branchesOpen: d.open }));
-      d.append(h('summary', { text: `Альтернативы и прочее (${res.branches.length})` }));
+      d.append(h('summary', { text: `${res.verified ? 'Вне проверенного маршрута' : 'Альтернативы и прочее'} (${res.branches.length})` }));
       const list = h('ol');
       for (const it of res.branches) list.append(this.row(it, undefined));
       d.append(list);
       out.push(d);
     }
     const notes = [...res.notes];
-    if (res.mode === 'anilist') notes.push('Рекомендованный порядок по связям и датам выхода AniList, не каноническая хронология.');
-    if (custom) notes.push('Порядок изменён вами.');
+    if (custom) notes.push('Есть ваши правки в текущем режиме. Источники описывают исходный маршрут.');
     out.push(h('div', { class: 'note', text: notes.join(' ') }));
     return out;
   }
@@ -402,7 +470,7 @@ export class WatchOrderView {
       h('button', {
         class: 'mark',
         text: watched ? '✓' : it.isCurrent ? '▶︎' : it.kind === 'main' ? '○' : '◇',
-        title: watched ? 'Снять отметку «просмотрено»' : 'Отметить просмотренным',
+        title: it.episodes ? 'Отметка для всего тайтла, включая все диапазоны серий' : watched ? 'Снять отметку «просмотрено»' : 'Отметить просмотренным',
         onClick: () => {
           this.user.setWatched(it.watchKey, !watched);
           this.render();
@@ -423,6 +491,7 @@ export class WatchOrderView {
 
     const meta = [it.formatLabel, yearOf(it.date), KIND_LABEL[it.kind], it.isCurrent ? 'вы здесь' : ''].filter(Boolean).join(' · ');
     if (meta) li.append(h('span', { class: 'meta', text: meta }));
+    if (it.episodes) li.append(h('span', { class: 'meta', text: `серии ${it.episodes}` }));
     for (const f of it.flags) li.append(h('span', { class: 'warn', text: f }));
 
     const conf = it.match?.confidence;
@@ -461,9 +530,9 @@ export class WatchOrderView {
         h(
           'span',
           { class: 'edit' },
-          h('button', { class: 'btn', text: '↑', title: 'Выше', onClick: () => save(move(edit.keys, it.watchKey, -1, edit.visibleKeys), edit.hidden) }),
-          h('button', { class: 'btn', text: '↓', title: 'Ниже', onClick: () => save(move(edit.keys, it.watchKey, 1, edit.visibleKeys), edit.hidden) }),
-          h('button', { class: 'btn', text: 'Скрыть', onClick: () => save(edit.keys, [...edit.hidden, it.watchKey]) }),
+          h('button', { class: 'btn', text: '↑', title: 'Выше', onClick: () => save(move(edit.keys, rowKey(it), -1, edit.visibleKeys), edit.hidden) }),
+          h('button', { class: 'btn', text: '↓', title: 'Ниже', onClick: () => save(move(edit.keys, rowKey(it), 1, edit.visibleKeys), edit.hidden) }),
+          h('button', { class: 'btn', text: 'Скрыть', onClick: () => save(edit.keys, [...edit.hidden, rowKey(it)]) }),
         ),
       );
     }

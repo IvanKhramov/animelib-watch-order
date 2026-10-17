@@ -3,6 +3,7 @@ import { dateKey } from './dates';
 import { isAbort } from './http';
 import { matchParts, matchTitles, pickVerified } from './matching';
 import { buildOrdering, type OrderedNode } from './orderPolicy';
+import { profileForId } from './orderProfiles';
 import type { LoadCtx, SiteAdapter } from './sites/site';
 import { DAY, HOUR, type UserState } from './storage';
 import type { AlMedia, FranchiseGraph, MediaFormat, OrderItem, OrderResult, SiteMatch, SiteTitle } from './types';
@@ -210,6 +211,24 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   }
   if (g.truncated) notes.push('Франшиза большая: показана часть, обход упёрся в лимит.');
 
+  // Граф из альтернативной точки входа может не дойти до частей проверенного маршрута.
+  // Один дополнительный пакет только по известным ID, без расширения соседних франшиз.
+  const profile = profileForId(rootId);
+  if (profile) {
+    const ids = [...new Set([...profile.recommended.steps, ...(profile.chronological?.steps ?? [])].map((step) => step.alId))]
+      .filter((id) => !g.nodes.has(id));
+    if (ids.length) {
+      try {
+        const nodes = await ctx.cache.wrap(`profile-nodes:${profile.id}:${profile.checkedAt}`, ids.join(','), DAY,
+          () => deps.anilist.getByIds(ids, ctx.signal), ctx.force);
+        for (const node of nodes) g.nodes.set(node.id, node);
+      } catch (e) {
+        if (isAbort(e)) throw e;
+        notes.push('Не удалось загрузить все части проверенного маршрута.');
+      }
+    }
+  }
+
   const root = g.nodes.get(rootId)!;
   const ordering = buildOrdering(g);
   // самый ранний тайтл основной линии обычно несёт общее название франшизы
@@ -234,7 +253,8 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   const branchIds = [...ordering.branches]
     .sort((a, b) => Number(a.kind === 'other') - Number(b.kind === 'other'))
     .map((n) => n.id);
-  await searchMissing([ordering.all.map((n) => n.id), branchIds], g, candidates, queried, rematch, deps);
+  const preferredIds = profile?.recommended.steps.map((step) => step.alId).filter((id) => g.nodes.has(id)) ?? [];
+  await searchMissing([[...new Set([...preferredIds, ...ordering.all.map((n) => n.id)])], branchIds], g, candidates, queried, rematch, deps);
   const matches = rematch();
   const parts = matchParts(g.nodes.values(), matches, [...indexTitles(candidates).values()], user.rejected());
   const expand = (n: OrderedNode): OrderItem[] => {
@@ -279,6 +299,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
 
   return {
     mode: 'anilist',
+    rootAlId: rootId,
     // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
     franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
     items: ordering.all.flatMap(expand),

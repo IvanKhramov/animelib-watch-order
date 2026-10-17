@@ -94,6 +94,9 @@ export type ItemKind = 'main' | 'extra' | 'recap' | 'alternative' | 'spinoff' | 
 export interface OrderItem {
   /** ключ для хранения отметок «просмотрено» */
   watchKey: string;
+  /** Разные диапазоны серий одного тайтла имеют общую отметку, но разные строки. */
+  rowKey?: string;
+  episodes?: string;
   alId?: number;
   title: string;
   subtitle?: string;
@@ -115,6 +118,7 @@ export interface OrderItem {
 
 export interface OrderResult {
   mode: 'anilist' | 'site-only';
+  rootAlId?: number;
   /** ключ, под которым хранится пользовательский порядок франшизы */
   franchiseKey: string;
   /** основная линия + дополнительное (в режиме «Всё») по порядку */

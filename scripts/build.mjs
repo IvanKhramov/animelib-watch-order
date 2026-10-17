@@ -13,8 +13,8 @@ const header = `// ==UserScript==
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @version      ${pkg.version}
-// @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
-// @description:en Watch order block on AnimeLib and AnimeGO anime pages: main line, OVAs and specials, alternatives. Links stay on the same site.
+// @description  Порядок просмотра франшизы: рекомендации с источниками, даты выхода и проверенная хронология. Отметки, обложки и ссылки на тот же сайт.
+// @description:en Franchise watch orders: recommendations with sources, release dates and verified timelines. Watch marks, covers and links to the same site.
 // @author       Ivan Khramov
 // @license      MIT
 // @match        https://animelib.org/*

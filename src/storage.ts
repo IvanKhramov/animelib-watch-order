@@ -1,5 +1,6 @@
 import type { CustomOrder } from './customOrder';
 import { isObj } from './guards';
+import type { WatchOrderMode } from './orderProfiles';
 
 /** Хранилище ключ-значение. В userscript это GM_getValue/GM_setValue, в тестах Map. */
 export interface KV {
@@ -100,7 +101,9 @@ export class UserState {
 
   prefs(): Prefs {
     const v = this.kv.get<Partial<Prefs>>(`user:${SCHEMA}:prefs`);
-    return { ...DEFAULT_PREFS, ...(v && typeof v === 'object' ? v : {}) };
+    const prefs = { ...DEFAULT_PREFS, ...(v && typeof v === 'object' ? v : {}) };
+    if (!['recommended', 'release', 'chronological'].includes(prefs.orderMode)) prefs.orderMode = 'recommended';
+    return prefs;
   }
 
   setPrefs(patch: Partial<Prefs>) {
@@ -153,6 +156,7 @@ export class UserState {
 }
 
 export interface Prefs {
+  orderMode: WatchOrderMode;
   view: 'main' | 'all';
   collapsed: boolean;
   branchesOpen: boolean;
@@ -162,7 +166,7 @@ export interface Prefs {
   hiddenSites: Record<string, true>;
 }
 
-const DEFAULT_PREFS: Prefs = { view: 'all', collapsed: false, branchesOpen: false, covers: false, hiddenSites: {} };
+const DEFAULT_PREFS: Prefs = { orderMode: 'recommended', view: 'all', collapsed: false, branchesOpen: false, covers: false, hiddenSites: {} };
 
 const USER_KEYS = ['watched', 'rejected', 'prefs', 'orders'] as const;
 const EXPORT_FORMAT = 'animelib-watch-order/v1';
@@ -182,6 +186,7 @@ function validUserField(name: (typeof USER_KEYS)[number], v: unknown): boolean {
   }
   // Старые экспорты могут содержать только часть настроек.
   return Object.entries(v).every(([key, value]) => {
+    if (key === 'orderMode') return value === 'recommended' || value === 'release' || value === 'chronological';
     if (key === 'view') return value === 'main' || value === 'all';
     if (key === 'hiddenSites') return trueMap(value);
     if (key === 'collapsed' || key === 'branchesOpen' || key === 'covers') return typeof value === 'boolean';

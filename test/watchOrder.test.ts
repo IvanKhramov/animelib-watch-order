@@ -4,6 +4,8 @@ import { Cache, memoryKV, UserState } from '../src/storage';
 import type { SiteAdapter } from '../src/sites/site';
 import type { SiteTitle } from '../src/types';
 import { baseName, buildWatchOrder } from '../src/watchOrder';
+import { profileForId } from '../src/orderProfiles';
+import { selectOrder } from '../src/orderModes';
 import { graph, media } from './helpers';
 
 const title = (key: string, name: string, anilistId?: number): SiteTitle => ({
@@ -28,6 +30,23 @@ function setup(nodes = [media(1, 'Root', 2020)]) {
 }
 
 describe('поиск по каталогу', () => {
+  it('дополняет проверенный профиль по точным ID и кэширует пакет без выдуманных ссылок', async () => {
+    const rootId = 9253;
+    const { deps, current } = setup([media(rootId, 'Steins;Gate', 2011)]);
+    current.anilistId = rootId;
+    vi.mocked(deps.anilist.loadFranchise).mockResolvedValue(graph(rootId, [media(rootId, 'Steins;Gate', 2011)]));
+    const ids = [...new Set(profileForId(rootId)!.recommended.steps.map((step) => step.alId))].filter((id) => id !== rootId);
+    const get = vi.spyOn(deps.anilist, 'getByIds').mockResolvedValue(ids.map((id) => media(id, `Part ${id}`, 2018)));
+    const res = await buildWatchOrder('current', deps);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(new Set(get.mock.calls[0]![0])).toEqual(new Set(ids));
+    const selected = selectOrder(res, 'recommended');
+    expect(selected.items.map((i) => i.alId)).toEqual(profileForId(rootId)!.recommended.steps.map((step) => step.alId));
+    expect(selected.items.slice(1).every((i) => i.match === undefined)).toBe(true);
+    await buildWatchOrder('current', deps);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it('убирает TV и год из общего запроса', () => {
     expect(baseName('JoJo no Kimyou na Bouken (TV) (2012)')).toBe('JoJo no Kimyou na Bouken');
     expect(baseName('Re:Zero kara Hajimeru Isekai Seikatsu')).toBe('Re:Zero kara Hajimeru Isekai Seikatsu');
