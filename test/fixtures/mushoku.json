@@ -1,0 +1,302 @@
+{
+ "rootId": 166873,
+ "truncated": false,
+ "nodes": [
+  {
+   "id": 166873,
+   "format": "TV",
+   "startDate": {
+    "year": 2024,
+    "month": 4,
+    "day": 8
+   },
+   "romaji": "Mushoku Tensei II: Isekai Ittara Honki Dasu Part 2",
+   "english": "Mushoku Tensei: Jobless Reincarnation Season 2 Part 2",
+   "native": "無職転生Ⅱ ～異世界行ったら本気だす～ 第2クール",
+   "synonyms": [
+    "Mushoku Tensei: Jobless Reincarnation Season 2 Cour 2",
+    "เกิดชาตินี้พี่ต้องเทพ ซีซั่น 2 ครึ่งหลัง",
+    "Mushoku Tensei: Isekai Ittara Honki Dasu 2nd Season Part 2",
+    "Mushoku Tensei II: Jobless Reincarnation Part 2",
+    "Mushoku Tensei II: Reencarnación desde cero",
+    "无职转生～到了异世界就拿出真本事～第2季"
+   ],
+   "episodes": 12,
+   "edges": [
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 85564,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "PREQUEL",
+     "id": 146065,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 178789,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 146065,
+   "format": "TV",
+   "startDate": {
+    "year": 2023,
+    "month": 7,
+    "day": 3
+   },
+   "romaji": "Mushoku Tensei II: Isekai Ittara Honki Dasu",
+   "english": "Mushoku Tensei: Jobless Reincarnation Season 2",
+   "native": "無職転生Ⅱ ～異世界行ったら本気だす～",
+   "synonyms": [
+    "เกิดชาตินี้พี่ต้องเทพ ซีซั่น 2",
+    "Mushoku Tensei: Isekai Ittara Honki Dasu 2nd Season",
+    "Mushoku Tensei II: Jobless Reincarnation",
+    "Mushoku Tensei II: Reencarnación desde cero",
+    "无职转生～到了异世界就拿出真本事～第2季"
+   ],
+   "episodes": 13,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 127720,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 142989,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 85564,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 166873,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 178789,
+   "format": "TV",
+   "startDate": {
+    "year": 2026,
+    "month": 7,
+    "day": 4
+   },
+   "romaji": "Mushoku Tensei III: Isekai Ittara Honki Dasu",
+   "english": "Mushoku Tensei: Jobless Reincarnation Season 3",
+   "native": "無職転生Ⅲ ～異世界行ったら本気だす～",
+   "synonyms": [
+    "無職転生 ～異世界行ったら本気だす～ 第3期",
+    "Mushoku Tensei: Isekai Ittara Honki Dasu 3rd Season",
+    "เกิดชาตินี้พี่ต้องเทพ ซีซั่น 3"
+   ],
+   "episodes": 14,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 166873,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 146378,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 217434,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 127720,
+   "format": "TV",
+   "startDate": {
+    "year": 2021,
+    "month": 10,
+    "day": 4
+   },
+   "romaji": "Mushoku Tensei: Isekai Ittara Honki Dasu Part 2",
+   "english": "Mushoku Tensei: Jobless Reincarnation Cour 2",
+   "native": "無職転生 ～異世界行ったら本気だす～ 第2クール",
+   "synonyms": [
+    "Mushoku Tensei: Jobless Reincarnation Part 2",
+    "เกิดชาตินี้พี่ต้องเทพ พาร์ท 2"
+   ],
+   "episodes": 12,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 108465,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 85564,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SIDE_STORY",
+     "id": 141534,
+     "type": "ANIME",
+     "format": "SPECIAL"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 146065,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 217434,
+   "format": "TV",
+   "startDate": {
+    "year": 2027
+   },
+   "romaji": "Mushoku Tensei III: Isekai Ittara Honki Dasu Part 2",
+   "native": "無職転生Ⅲ ～異世界行ったら本気だす～ 第2クール",
+   "synonyms": [
+    "Mushoku Tensei: Jobless Reincarnation Season 3 Part 2"
+   ],
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 178789,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  },
+  {
+   "id": 108465,
+   "format": "TV",
+   "startDate": {
+    "year": 2021,
+    "month": 1,
+    "day": 11
+   },
+   "romaji": "Mushoku Tensei: Isekai Ittara Honki Dasu",
+   "english": "Mushoku Tensei: Jobless Reincarnation",
+   "native": "無職転生 ～異世界行ったら本気だす～",
+   "synonyms": [
+    "Jobless Reincarnation: I Will Seriously Try If I Go To Another World",
+    "无职转生 ~到了异世界就拿出真本事~",
+    "เกิดชาตินี้พี่ต้องเทพ",
+    "Thất nghiệp chuyển sinh"
+   ],
+   "episodes": 11,
+   "edges": [
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 85564,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 127720,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 141534,
+   "format": "SPECIAL",
+   "startDate": {
+    "year": 2022,
+    "month": 3,
+    "day": 16
+   },
+   "romaji": "Mushoku Tensei: Isekai Ittara Honki Dasu Part 2 - Eris no Goblin Toubatsu",
+   "english": "Mushoku Tensei: Jobless Reincarnation Cour 2 - Eris the Goblin Slayer",
+   "native": "無職転生 ～異世界行ったら本気だす～ 第2クール エリスのゴブリン討伐",
+   "synonyms": [
+    "Mushoku Tensei: Jobless Reincarnation Cour 2 Special",
+    "Mushoku Tensei: Jobless Reincarnation Part 2 Special",
+    "เกิดชาตินี้พี่ต้องเทพ OVA",
+    "Mushoku Tensei: Isekai Ittara Honki Dasu Part 2 Special"
+   ],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "PARENT",
+     "id": 127720,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 85470,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 85564,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  }
+ ]
+}

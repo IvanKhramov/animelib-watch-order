@@ -1,0 +1,422 @@
+{
+ "rootId": 9253,
+ "truncated": false,
+ "nodes": [
+  {
+   "id": 9253,
+   "format": "TV",
+   "startDate": {
+    "year": 2011,
+    "month": 4,
+    "day": 6
+   },
+   "romaji": "Steins;Gate",
+   "english": "Steins;Gate",
+   "native": "シュタインズ・ゲート",
+   "synonyms": [
+    "S;G",
+    "סטיינס;גייט",
+    "命运石之门",
+    "Врата;Штейна"
+   ],
+   "episodes": 24,
+   "edges": [
+    {
+     "rel": "SEQUEL",
+     "id": 10863,
+     "type": "ANIME",
+     "format": "OVA"
+    },
+    {
+     "rel": "SIDE_STORY",
+     "id": 20907,
+     "type": "ANIME",
+     "format": "ONA"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 21624,
+     "type": "ANIME",
+     "format": "OVA"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 47517,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SIDE_STORY",
+     "id": 11577,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 58897,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 127015,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 10519,
+     "type": "ANIME",
+     "format": "ONA"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "OTHER",
+     "id": 4975,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 13599,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 21708,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 4975,
+   "format": "TV",
+   "startDate": {
+    "year": 2008,
+    "month": 10,
+    "day": 9
+   },
+   "romaji": "ChäoS;HEAd",
+   "english": "ChäoS;HEAd",
+   "native": "カオスヘッド",
+   "synonyms": [
+    "ChaoS;HEAd"
+   ],
+   "episodes": 12,
+   "edges": [
+    {
+     "rel": "SEQUEL",
+     "id": 21126,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 37653,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 10519,
+     "type": "ANIME",
+     "format": "ONA"
+    },
+    {
+     "rel": "OTHER",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 13599,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 21708,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 10863,
+   "format": "OVA",
+   "startDate": {
+    "year": 2012,
+    "month": 2,
+    "day": 22
+   },
+   "romaji": "Steins;Gate: Oukoubakko no Poriomania",
+   "english": "Steins;Gate: Egoistic Poriomania",
+   "native": "シュタインズ・ゲート 横行跋扈のポリオマニア",
+   "synonyms": [
+    "Steins",
+    "Gate Special",
+    "Poriomanía del egoismo"
+   ],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 11577,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  },
+  {
+   "id": 11577,
+   "format": "MOVIE",
+   "startDate": {
+    "year": 2013,
+    "month": 4,
+    "day": 20
+   },
+   "romaji": "Steins;Gate: Fuka Ryouiki no Déjà vu",
+   "english": "Steins;Gate The Movie – Load Region of Déjà Vu",
+   "native": "劇場版 シュタインズゲート 負荷領域のデジャヴ",
+   "synonyms": [],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 10863,
+     "type": "ANIME",
+     "format": "OVA"
+    },
+    {
+     "rel": "PARENT",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  },
+  {
+   "id": 13599,
+   "format": "TV",
+   "startDate": {
+    "year": 2012,
+    "month": 10,
+    "day": 12
+   },
+   "romaji": "Robotics;Notes",
+   "english": "Robotics;Notes",
+   "native": "Robotics;Notes",
+   "synonyms": [
+    "ロボティクス・ノーツ",
+    "Внимание, роботика!"
+   ],
+   "episodes": 22,
+   "edges": [
+    {
+     "rel": "ALTERNATIVE",
+     "id": 65063,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "OTHER",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 4975,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 21708,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 20907,
+   "format": "ONA",
+   "startDate": {
+    "year": 2014,
+    "month": 10,
+    "day": 14
+   },
+   "romaji": "Steins;Gate: Soumei Eichi no Cognitive Computing",
+   "native": "Steins;Gate 聡明叡智のコグニティブ・コンピューティング",
+   "synonyms": [
+    "Steins;Gate: The Sagacious Wisdom of Cognitive Computing"
+   ],
+   "episodes": 4,
+   "edges": [
+    {
+     "rel": "PARENT",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  },
+  {
+   "id": 21624,
+   "format": "OVA",
+   "startDate": {
+    "year": 2015,
+    "month": 12,
+    "day": 3
+   },
+   "romaji": "Steins;Gate: Kyoukaimenjou no Missing Link - Divide By Zero",
+   "english": "Steins;Gate 0: 23β -Divide by Zero-",
+   "native": "シュタインズ・ゲート 境界面上のミッシングリンク -Divide By Zero-",
+   "synonyms": [
+    "Steins;Gate: Episode 23 (β)"
+   ],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "ALTERNATIVE",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 21127,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  },
+  {
+   "id": 21708,
+   "format": "TV",
+   "startDate": {
+    "year": 2016,
+    "month": 10,
+    "day": 9
+   },
+   "romaji": "Occultic;Nine",
+   "english": "Occultic;Nine",
+   "native": "Occultic;Nine -オカルティック・ナイン-",
+   "synonyms": [],
+   "episodes": 12,
+   "edges": [
+    {
+     "rel": "SOURCE",
+     "id": 77048,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 87067,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "OTHER",
+     "id": 13599,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 4975,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "OTHER",
+     "id": 9253,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 21127,
+   "format": "TV",
+   "startDate": {
+    "year": 2018,
+    "month": 4,
+    "day": 12
+   },
+   "romaji": "Steins;Gate 0",
+   "english": "Steins;Gate 0",
+   "native": "シュタインズ・ゲート ゼロ",
+   "synonyms": [
+    "s;g0",
+    "命运石之门0"
+   ],
+   "episodes": 23,
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 21624,
+     "type": "ANIME",
+     "format": "OVA"
+    },
+    {
+     "rel": "SIDE_STORY",
+     "id": 104174,
+     "type": "ANIME",
+     "format": "OVA"
+    },
+    {
+     "rel": "ALTERNATIVE",
+     "id": 102247,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 91997,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  }
+ ]
+}

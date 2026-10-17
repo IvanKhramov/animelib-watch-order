@@ -1,0 +1,174 @@
+{
+ "rootId": 130003,
+ "truncated": false,
+ "nodes": [
+  {
+   "id": 130003,
+   "format": "TV",
+   "startDate": {
+    "year": 2022,
+    "month": 10,
+    "day": 9
+   },
+   "romaji": "Bocchi the Rock!",
+   "english": "BOCCHI THE ROCK!",
+   "native": "ぼっち・ざ・ろっく！",
+   "synonyms": [
+    "РОК-ТИХОНЯ!",
+    "บจจิเดอะร็อก!",
+    "孤獨搖滾！",
+    "孤独摇滚！",
+    "외톨이 THE ROCK!",
+    "봇치 더 록!",
+    "BTR"
+   ],
+   "episodes": 12,
+   "edges": [
+    {
+     "rel": "SOURCE",
+     "id": 111258,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "CHARACTER",
+     "id": 127549,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SUMMARY",
+     "id": 165253,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "SUMMARY",
+     "id": 171099,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 186712,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 165253,
+   "format": "MOVIE",
+   "startDate": {
+    "year": 2024,
+    "month": 6,
+    "day": 7
+   },
+   "romaji": "Bocchi the Rock! Re:",
+   "english": "BOCCHI THE ROCK! Recap Part 1",
+   "native": "ぼっち・ざ・ろっく！Re:",
+   "synonyms": [
+    "劇場総集編 ぼっち・ざ・ろっく！前編",
+    "Gekijou Soushuu-hen Bocchi the Rock! - Zenpen",
+    "BOCCHI THE ROCK! Movie 1",
+    "BOCCHI THE ROCK! THEATER COMPILATION"
+   ],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "PARENT",
+     "id": 130003,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 111258,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 171099,
+     "type": "ANIME",
+     "format": "MOVIE"
+    }
+   ]
+  },
+  {
+   "id": 171099,
+   "format": "MOVIE",
+   "startDate": {
+    "year": 2024,
+    "month": 8,
+    "day": 9
+   },
+   "romaji": "Bocchi the Rock! Re:Re:",
+   "english": "BOCCHI THE ROCK! Recap Part 2",
+   "native": "ぼっち・ざ・ろっく！ Re:Re:",
+   "synonyms": [
+    "劇場総集編 ぼっち・ざ・ろっく！後編",
+    "Gekijou Soushuu-hen Bocchi the Rock! - Kouhen",
+    "BOCCHI THE ROCK! Movie 2",
+    "BOCCHI THE ROCK! THEATER COMPILATION"
+   ],
+   "episodes": 1,
+   "edges": [
+    {
+     "rel": "SOURCE",
+     "id": 111258,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    },
+    {
+     "rel": "PREQUEL",
+     "id": 165253,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "PARENT",
+     "id": 130003,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "SEQUEL",
+     "id": 186712,
+     "type": "ANIME",
+     "format": "TV"
+    }
+   ]
+  },
+  {
+   "id": 186712,
+   "format": "TV",
+   "startDate": {},
+   "romaji": "Bocchi the Rock! 2nd Season",
+   "native": "ぼっち・ざ・ろっく！ 2期",
+   "synonyms": [
+    "BTR2"
+   ],
+   "edges": [
+    {
+     "rel": "PREQUEL",
+     "id": 130003,
+     "type": "ANIME",
+     "format": "TV"
+    },
+    {
+     "rel": "PREQUEL",
+     "id": 171099,
+     "type": "ANIME",
+     "format": "MOVIE"
+    },
+    {
+     "rel": "SOURCE",
+     "id": 111258,
+     "type": "MANGA",
+     "format": "UNKNOWN"
+    }
+   ]
+  }
+ ]
+}

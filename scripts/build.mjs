@@ -1,0 +1,50 @@
+import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
+
+const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+// @connect только для AniList: API AnimeLib и страницы animego запрашиваются обычным fetch страницы
+const header = `// ==UserScript==
+// @name         Порядок просмотра франшизы (AnimeLib, AnimeGO)
+// @namespace    https://github.com/local/animelib-watch-order
+// @version      ${pkg.version}
+// @description  Блок «Порядок просмотра» на странице аниме: основная линия, дополнительное, альтернативы. Ссылки только на сам сайт.
+// @match        https://animelib.org/*
+// @match        https://animego.me/*
+// @match        https://animego.org/*
+// @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
+// @connect      graphql.anilist.co
+// @run-at       document-idle
+// @noframes
+// ==/UserScript==
+`;
+
+await build({
+  entryPoints: ['src/main.ts'],
+  bundle: true,
+  format: 'iife',
+  target: 'es2020',
+  charset: 'utf8',
+  legalComments: 'none',
+  banner: { js: header },
+  outfile: 'dist/animelib-watch-order.user.js',
+  logLevel: 'info',
+});
+
+// превью-сборка: та же логика + обвязка GM_* для ручной проверки без Violentmonkey
+const shim = readFileSync(new URL('./preview-shim.js', import.meta.url), 'utf8');
+await build({
+  entryPoints: ['src/main.ts'],
+  bundle: true,
+  format: 'iife',
+  target: 'es2020',
+  minify: true,
+  charset: 'utf8',
+  legalComments: 'none',
+  banner: { js: shim },
+  outfile: 'dist/preview-inject.js',
+  logLevel: 'info',
+});
