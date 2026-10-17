@@ -1,5 +1,6 @@
 import { AniListClient } from './anilistAdapter';
 import { CommunityOrdersClient } from './communityOrders';
+import { cachedWatchOrder } from './franchiseCache';
 import { gmKV, gmMenuCommand, gmTransport } from './gm';
 import { fetchTransport, isAbort, withRetry } from './http';
 import { createAnimego } from './sites/animego';
@@ -29,6 +30,11 @@ function start(adapter: SiteAdapter) {
     s.ctrl.abort();
     s.ctrl = new AbortController();
     const ctx = { signal: s.ctrl.signal, cache, force };
+    const cached = cachedWatchOrder(s.key, { adapter, ctx, user });
+    if (cached) {
+      s.view.set({ status: 'ready', result: cached });
+      return;
+    }
     s.view.set({ status: 'loading' });
     // без общего таймаута блок молча висит, например пока менеджер ждёт разрешения на @connect
     const timer = setTimeout(() => {

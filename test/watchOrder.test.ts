@@ -32,6 +32,27 @@ function setup(nodes = [media(1, 'Root', 2020)]) {
 }
 
 describe('поиск по каталогу', () => {
+  it('новый профиль в кэшированной ветке сначала загружает все недостающие части', async () => {
+    const nodes = [media(999999, 'Outer', 2000, 'TV', [['SIDE_STORY', 9253]]), media(9253, 'Steins;Gate', 2011)];
+    const { deps, current } = setup(nodes);
+    current.anilistId = 999999;
+    const sg = title('sg', 'Steins;Gate', 9253);
+    deps.adapter.loadCurrent = async (key) => key === 'sg' ? sg : current;
+    deps.adapter.loadRelated = async () => ({ titles: [sg, current], partial: false });
+    vi.mocked(deps.anilist.loadFranchise).mockImplementation(async (rootId) => ({
+      ...graph(rootId, nodes), reusableRootIds: [999999, 9253],
+    }));
+    const ids = [...new Set(profileForId(9253)!.recommended.steps.map((step) => step.alId))].filter((id) => id !== 9253);
+    const get = vi.spyOn(deps.anilist, 'getByIds').mockResolvedValue(ids.map((id) => media(id, `Part ${id}`, 2018)));
+    await buildWatchOrder('current', deps);
+    expect(get).not.toHaveBeenCalled();
+    const result = await buildWatchOrder('sg', deps);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(selectOrder(result, 'recommended').items.map((i) => i.alId)).toEqual(profileForId(9253)!.recommended.steps.map((step) => step.alId));
+    await buildWatchOrder('sg', deps);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
   it('автоматически подхватывает внешний маршрут для франшизы вне ручного каталога', async () => {
     const { deps } = setup([media(1, 'Root', 2020)]);
     const remote = { version: 1, updatedAt: new Date(Date.parse(snapshot.updatedAt) + 24 * 3_600_000).toISOString(), profiles: [{

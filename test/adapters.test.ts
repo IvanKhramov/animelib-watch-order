@@ -71,6 +71,24 @@ describe('animego', () => {
 });
 
 describe('AniList', () => {
+  it('для смены корня кэшируются только полностью раскрытые узлы, не альтернативы и листья', async () => {
+    const edges: Record<number, [string, number][]> = {
+      1: [['SEQUEL', 2], ['SIDE_STORY', 3], ['ALTERNATIVE', 4], ['OTHER', 5]],
+      4: [['SEQUEL', 6]],
+    };
+    const transport: Transport = async (req) => {
+      const { ids } = JSON.parse(req.body!).variables as { ids: number[] };
+      return { status: 200, text: JSON.stringify({ data: { Page: { media: ids.map((id) => ({
+        id, type: 'ANIME', format: 'TV', title: { romaji: `T${id}` },
+        relations: { edges: (edges[id] ?? []).map(([relationType, other]) => ({ relationType,
+          node: { id: other, type: 'ANIME', format: 'TV' } })) },
+      })) } } }) };
+    };
+    const g = await new AniListClient(transport).loadFranchise(1);
+    expect([...g.nodes.keys()].sort()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(g.reusableRootIds?.sort()).toEqual([1, 2, 3]);
+  });
+
   it('отбрасывает некорректные Media', () => {
     expect(parseMedia({ id: 'x', type: 'ANIME' })).toBeUndefined();
     expect(parseMedia({ id: 1, type: 'MANGA' })).toBeUndefined();
@@ -100,6 +118,7 @@ describe('AniList', () => {
     const g = await new AniListClient(transport).loadFranchise(1, undefined, { maxNodes: 30, maxRequests: 100 });
     expect(g.nodes.size).toBeLessThanOrEqual(30);
     expect(g.truncated).toBe(true);
+    expect(g.reusableRootIds).toEqual([1]);
   });
 
   it('ошибка AniList превращается в исключение, а не в пустой граф', async () => {

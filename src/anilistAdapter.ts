@@ -181,6 +181,8 @@ export class AniListClient {
       }
       if (!progressed && toFetch.length === 0) break;
     }
-    return { rootId, nodes, truncated };
+    const reusableRootIds = truncated ? [rootId] : [...expanded]
+      .filter(([, level]) => level === 'full').map(([id]) => id);
+    return { rootId, nodes, truncated, reusableRootIds };
   }
 }

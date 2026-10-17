@@ -6,7 +6,7 @@
 // @supportURL   https://github.com/IvanKhramov/animelib-watch-order/issues
 // @updateURL    https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
 // @downloadURL  https://raw.githubusercontent.com/IvanKhramov/animelib-watch-order/main/dist/animelib-watch-order.user.js
-// @version      0.6.0
+// @version      0.6.1
 // @description  Порядок просмотра франшизы: рекомендации с источниками, даты выхода и проверенная хронология. Отметки, обложки и ссылки на тот же сайт.
 // @description:en Franchise watch orders: recommendations with sources, release dates and verified timelines. Watch marks, covers and links to the same site.
 // @author       Ivan Khramov
@@ -337,14 +337,15 @@
         }
         if (!progressed && toFetch.length === 0) break;
       }
-      return { rootId, nodes, truncated };
+      const reusableRootIds = truncated ? [rootId] : [...expanded].filter(([, level]) => level === "full").map(([id2]) => id2);
+      return { rootId, nodes, truncated, reusableRootIds };
     }
   };
 
   // data/community-orders.json
   var community_orders_default = {
     version: 1,
-    updatedAt: "2026-10-17T20:29:45.254Z",
+    updatedAt: "2026-10-17T20:33:25.780Z",
     sources: [
       {
         name: "r/anime",
@@ -7962,13 +7963,18 @@
 
   // src/storage.ts
   var SCHEMA = "v1";
-  var CACHE_SCHEMA = "v3";
+  var CACHE_SCHEMA = "v4";
   var HOUR = 36e5;
   var DAY = 24 * HOUR;
-  var Cache = class {
-    constructor(kv, now = Date.now) {
+  var Cache = class _Cache {
+    constructor(kv, now = Date.now, signal) {
       this.kv = kv;
       this.now = now;
+      this.signal = signal;
+    }
+    /** Отменённая загрузка не должна перезаписать результаты более новой. */
+    withSignal(signal) {
+      return new _Cache(this.kv, this.now, signal);
     }
     key(ns, k) {
       return `cache:${CACHE_SCHEMA}:${ns}:${k}`;
@@ -7979,6 +7985,7 @@
       return e.v;
     }
     set(ns, k, v, ttlMs) {
+      if (this.signal?.aborted) throw new AbortError();
       this.kv.set(this.key(ns, k), { exp: this.now() + ttlMs, v });
     }
     /** Обёртка «взять из кэша или загрузить». force пропускает чтение, но результат сохраняет. */
@@ -8178,6 +8185,14 @@
     constructor(transport) {
       this.transport = transport;
     }
+    /** Переход внутри уже загруженной франшизы не должен запускать обновление фида. */
+    peek(rootId, ctx) {
+      const latest = parseCatalogue(ctx.cache.get(NS, "latest"));
+      const saved = parseCatalogue(ctx.cache.get(NS, "last-good"));
+      const bundled = parseCatalogue(community_orders_default);
+      const fallback = saved && Date.parse(saved.updatedAt) >= Date.parse(bundled.updatedAt) ? saved : bundled;
+      return communityProfile(latest ?? fallback, rootId);
+    }
     async load(rootId, ctx) {
       const cached = !ctx.force ? parseCatalogue(ctx.cache.get(NS, "latest")) : void 0;
       if (cached) return { profile: communityProfile(cached, rootId) };
@@ -8202,49 +8217,6 @@
       }
     }
   };
-
-  // src/gm.ts
-  function gmMenuCommand(name, fn) {
-    if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand(name, fn);
-  }
-  var gmTransport = typeof GM_xmlhttpRequest === "function" ? (req) => new Promise((resolve, reject) => {
-    if (req.signal?.aborted) return reject(new AbortError());
-    const h2 = GM_xmlhttpRequest({
-      method: req.method ?? "GET",
-      url: req.url,
-      headers: req.headers,
-      data: req.body,
-      anonymous: true,
-      timeout: req.timeoutMs ?? 15e3,
-      onload: (r) => {
-        const ra = Number(/^retry-after:\s*(\d+)/im.exec(r.responseHeaders)?.[1]);
-        resolve({ status: r.status, text: r.responseText, retryAfter: ra > 0 ? ra : void 0 });
-      },
-      onerror: () => reject(new Error("сетевая ошибка")),
-      ontimeout: () => reject(new Error("таймаут"))
-    });
-    req.signal?.addEventListener("abort", () => {
-      h2.abort();
-      reject(new AbortError());
-    }, { once: true });
-  }) : fetchTransport;
-  function gmKV() {
-    if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") {
-      return {
-        get: (k) => {
-          const v = localStorage.getItem(`awo:${k}`);
-          return v === null ? void 0 : JSON.parse(v);
-        },
-        set: (k, v) => localStorage.setItem(`awo:${k}`, JSON.stringify(v)),
-        remove: (k) => localStorage.removeItem(`awo:${k}`)
-      };
-    }
-    return {
-      get: (k) => GM_getValue(k, void 0),
-      set: (k, v) => GM_setValue(k, v),
-      remove: (k) => typeof GM_deleteValue === "function" ? GM_deleteValue(k) : GM_setValue(k, void 0)
-    };
-  }
 
   // src/dates.ts
   var RU_MONTHS = [
@@ -8294,6 +8266,299 @@
   function yearsCompatible(a, b) {
     if (!a?.year || !b?.year) return true;
     return Math.abs(a.year - b.year) <= 1;
+  }
+
+  // src/matching.ts
+  function normalizeTitle(s) {
+    return s.normalize("NFKC").toLowerCase().replace(/[ё]/g, "е").replace(/[‘’“”`'"«»]/g, "").replace(/[~:;,.!?()[\]{}\-–—_/\\|·•☆★♪♥+*&]/g, " ").replace(/\s+/g, " ").trim();
+  }
+  function alNames(m) {
+    const out = /* @__PURE__ */ new Set();
+    for (const n of [m.romaji, m.english, m.native, ...m.synonyms]) {
+      if (!n) continue;
+      const k = normalizeTitle(n);
+      if (k.length >= 2) out.add(k);
+    }
+    return out;
+  }
+  function siteNames(t) {
+    const out = /* @__PURE__ */ new Set();
+    for (const n of t.names) {
+      const k = normalizeTitle(n);
+      if (k.length >= 2) out.add(k);
+    }
+    return out;
+  }
+  var FORMAT_GROUP = {
+    TV: "series",
+    TV_SHORT: "series",
+    ONA: "series",
+    MOVIE: "movie",
+    OVA: "extra",
+    SPECIAL: "extra",
+    MUSIC: "music",
+    UNKNOWN: "?"
+  };
+  function formatsCompatible(a, b) {
+    if (!a || !b || a === "UNKNOWN" || b === "UNKNOWN") return true;
+    const ga = FORMAT_GROUP[a];
+    const gb = FORMAT_GROUP[b];
+    if (ga === gb) return true;
+    const loose = /* @__PURE__ */ new Set(["series", "extra"]);
+    return a === "ONA" || b === "ONA" ? loose.has(ga) && loose.has(gb) : false;
+  }
+  var pairKey = (alId, siteKey) => `${alId}|${siteKey}`;
+  function candidatesFor(al, site) {
+    if (site.anilistId !== void 0) return site.anilistId === al.id ? "id" : void 0;
+    if (!formatsCompatible(al.format, site.format)) return void 0;
+    const an = alNames(al);
+    for (const n of siteNames(site)) {
+      if (an.has(n)) return yearsCompatible(al.startDate, site.date) ? "name" : void 0;
+    }
+    if (sameExactDate(al.startDate, site.date) && al.format === site.format) return "date";
+    return void 0;
+  }
+  function candidateRank(c) {
+    const dateRank = c.confidence === "name" ? (c.site.date?.year !== void 0 && c.site.date.year === c.al.startDate.year ? 2 : 0) + (sameExactDate(c.site.date, c.al.startDate) ? 1 : 0) : 0;
+    return RANK2[c.confidence] * 4 + dateRank;
+  }
+  var RANK2 = { site: 4, id: 3, name: 2, date: 1 };
+  function matchTitles(alNodes, pool, rejected = /* @__PURE__ */ new Set()) {
+    const all = [];
+    for (const al of alNodes) {
+      for (const site of pool) {
+        if (rejected.has(pairKey(al.id, site.key))) continue;
+        const c = candidatesFor(al, site);
+        if (c) all.push({ al, site, confidence: c });
+      }
+    }
+    const best = (key) => {
+      const m = /* @__PURE__ */ new Map();
+      for (const c of all) {
+        const k = key(c);
+        const cur = m.get(k);
+        if (!cur || candidateRank(c) > candidateRank(cur[0])) m.set(k, [c]);
+        else if (candidateRank(c) === candidateRank(cur[0])) cur.push(c);
+      }
+      return m;
+    };
+    const byAl = best((c) => c.al.id);
+    const bySite = best((c) => c.site.key);
+    const out = /* @__PURE__ */ new Map();
+    for (const [alId, cands] of byAl) {
+      if (cands.length !== 1) continue;
+      const c = cands[0];
+      const back = bySite.get(c.site.key);
+      if (!back || back.length !== 1 || back[0].al.id !== alId) continue;
+      out.set(alId, { title: c.site, confidence: c.confidence });
+    }
+    return out;
+  }
+  function pickVerified(current, results) {
+    const m = matchTitles(results, [current]);
+    const hits = [...m.entries()].filter(([, v]) => v.confidence !== "date");
+    if (hits.length !== 1) return void 0;
+    return results.find((r) => r.id === hits[0][0]);
+  }
+  function partName(name) {
+    const m = normalizeTitle(name).match(/^(.+?)\s+(?:(?:part|часть)\s+)?(\d+)$/);
+    return m && m[1].length >= 6 ? { base: m[1], number: Number(m[2]) } : void 0;
+  }
+  function nextPart(primary, title, al) {
+    for (const name of primary.names) {
+      const a = partName(name);
+      if (!a) continue;
+      if (![...alNames(al)].some((n) => partName(n)?.base === a.base)) continue;
+      if (title.names.some((n) => {
+        const b = partName(n);
+        return b?.base === a.base && b.number === a.number + 1;
+      })) return true;
+    }
+    return false;
+  }
+  function matchParts(nodes, matches, pool, rejected = /* @__PURE__ */ new Set()) {
+    const used = new Set([...matches.values()].map((m) => m.title.key));
+    const proposals = /* @__PURE__ */ new Map();
+    const bundled = /* @__PURE__ */ new Set([
+      "13329--rezero-kara-hajimeru-isekai-seikatsu-memory-snow-anime",
+      "14685--rezero-kara-hajimeru-isekai-seikatsu-hyouketsu-no-kizuna-anime"
+    ]);
+    for (const al of nodes) {
+      const primary = matches.get(al.id)?.title;
+      if (!primary) continue;
+      for (const title of pool) {
+        if (used.has(title.key) || rejected.has(pairKey(al.id, title.key)) || title.anilistId !== void 0 && title.anilistId !== al.id || !primary.format || primary.format === "UNKNOWN" || title.format !== primary.format || !primary.date?.year || !title.date?.year || !yearsCompatible(primary.date, title.date) || !yearsCompatible(al.startDate, title.date)) continue;
+        const bundle = al.id === 100049 && bundled.has(primary.key) && bundled.has(title.key);
+        if (!bundle && !nextPart(primary, title, al)) continue;
+        const list = proposals.get(title.key) ?? [];
+        list.push({ id: al.id, match: { title, confidence: title.anilistId === al.id ? "id" : "name" } });
+        proposals.set(title.key, list);
+      }
+    }
+    const out = /* @__PURE__ */ new Map();
+    for (const proposalsForTitle of proposals.values()) {
+      if (proposalsForTitle.length !== 1) continue;
+      const { id: id2, match } = proposalsForTitle[0];
+      const list = out.get(id2) ?? [];
+      list.push(match);
+      out.set(id2, list);
+    }
+    for (const [id2, titles] of out) if (titles.length !== 1) out.delete(id2);
+    return out;
+  }
+
+  // src/franchiseCache.ts
+  var FRANCHISE_TTL = 12 * HOUR;
+  var NS2 = "prepared-order";
+  var fingerprint = (user) => JSON.stringify([...user.rejected()].sort());
+  var pageKey = (key, deps) => `${deps.adapter.id}:${key}`;
+  var snapshotKey = (franchise, deps) => `${deps.adapter.id}:${franchise}`;
+  function read(namespace, key, deps) {
+    try {
+      return deps.ctx.cache.get(namespace, key);
+    } catch {
+      return void 0;
+    }
+  }
+  function reference(key, deps) {
+    const ref = read(`${NS2}:alias`, pageKey(key, deps), deps);
+    return typeof ref === "string" ? ref : void 0;
+  }
+  function validResult(value) {
+    return isObj(value) && (value.mode === "anilist" || value.mode === "site-only") && typeof value.franchiseKey === "string" && Array.isArray(value.items) && Array.isArray(value.branches) && Array.isArray(value.notes);
+  }
+  function snapshotData(franchise, deps) {
+    const value = read(`${NS2}:franchise`, snapshotKey(franchise, deps), deps);
+    if (!isObj(value) || typeof value.generation !== "string" || typeof value.rejected !== "string" || !validResult(value.result) || !Array.isArray(value.candidates) || !Array.isArray(value.relatedKeys) || !Array.isArray(value.pages) || !value.pages.every((page) => isObj(page) && typeof page.key === "string" && typeof page.id === "number")) return void 0;
+    if (value.graph && (!isObj(value.graph) || !Array.isArray(value.graph.nodes) || !Array.isArray(value.graph.reusableRootIds) || typeof value.graph.truncated !== "boolean" || !value.graph.nodes.every((node) => isObj(node) && typeof node.id === "number" && Array.isArray(node.edges)))) return void 0;
+    return value;
+  }
+  function readSnapshot(franchise, deps) {
+    const snapshot = snapshotData(franchise, deps);
+    return snapshot?.rejected === fingerprint(deps.user) ? snapshot : void 0;
+  }
+  function cachedWatchOrder(key, deps) {
+    if (deps.ctx.force) return void 0;
+    const page = read(`${NS2}:page`, pageKey(key, deps), deps);
+    if (!isObj(page) || typeof page.franchise !== "string" || !validResult(page.result)) return void 0;
+    const snapshot = readSnapshot(page.franchise, deps);
+    if (!snapshot || snapshot.generation !== page.generation) return void 0;
+    return structuredClone(page.result);
+  }
+  function preparedNeedsRefresh(key, deps) {
+    if (deps.ctx.force) return false;
+    const ref = reference(key, deps);
+    if (!ref) return false;
+    const snapshot = snapshotData(ref, deps);
+    return !snapshot || !snapshot.pages.some((page) => page.key === key);
+  }
+  function cachedFranchise(key, deps) {
+    if (deps.ctx.force) return void 0;
+    const ref = reference(key, deps);
+    if (!ref) return void 0;
+    const snapshot = readSnapshot(ref, deps);
+    if (!snapshot?.graph) return void 0;
+    const page = snapshot.pages.find((page2) => page2.key === key);
+    if (!page || !snapshot.graph.reusableRootIds.includes(page.id)) return void 0;
+    const copy = structuredClone(snapshot);
+    const current = copy.candidates.find((title) => title.key === key);
+    if (!current) return void 0;
+    const relatedKeys = new Set(copy.relatedKeys);
+    return {
+      current,
+      franchise: ref,
+      snapshot: copy,
+      graph: {
+        rootId: page.id,
+        nodes: new Map(copy.graph.nodes.map((node) => [node.id, node])),
+        truncated: copy.graph.truncated,
+        reusableRootIds: copy.graph.reusableRootIds
+      },
+      related: copy.candidates.filter((title) => title.key !== key && relatedKeys.has(title.key)),
+      searched: copy.candidates.filter((title) => !relatedKeys.has(title.key))
+    };
+  }
+  function cachePreparedOrder(key, result, deps, data, seed) {
+    if (deps.ctx.signal.aborted) return;
+    const previous = reference(key, deps);
+    const franchise = seed?.franchise ?? previous ?? result.franchiseKey;
+    const snapshot = seed?.snapshot ?? {
+      generation: `${Date.now()}:${Math.random()}`,
+      rejected: fingerprint(deps.user),
+      candidates: data?.candidates ?? [],
+      relatedKeys: [...data?.relatedKeys ?? []],
+      pages: [],
+      result: structuredClone(result)
+    };
+    try {
+      if (!seed) {
+        const graph = data?.graph;
+        if (graph) {
+          const allowed = new Set(data?.complete ? graph.reusableRootIds ?? [graph.rootId] : [graph.rootId]);
+          snapshot.graph = { nodes: [...graph.nodes.values()], truncated: graph.truncated, reusableRootIds: [...allowed] };
+          const titles = new Map(snapshot.candidates.map((title) => [title.key, title]));
+          for (const [id2, match] of data.matches) {
+            if (!allowed.has(id2) || data.hasParts.has(id2) || !["id", "name"].includes(match.confidence) || deps.user.rejected().has(pairKey(id2, match.title.key))) continue;
+            titles.set(match.title.key, match.title);
+            snapshot.pages.push({ key: match.title.key, id: id2 });
+          }
+          snapshot.candidates = [...titles.values()];
+        }
+        const ttl = data?.complete ? FRANCHISE_TTL : HOUR / 12;
+        deps.ctx.cache.set(`${NS2}:franchise`, snapshotKey(franchise, deps), snapshot, ttl);
+        for (const page of snapshot.pages) deps.ctx.cache.set(`${NS2}:alias`, pageKey(page.key, deps), franchise, 30 * 24 * HOUR);
+        deps.ctx.cache.set(`${NS2}:alias`, pageKey(key, deps), franchise, 30 * 24 * HOUR);
+      }
+      deps.ctx.cache.set(`${NS2}:page`, pageKey(key, deps), {
+        generation: snapshot.generation,
+        franchise,
+        result: structuredClone(result)
+      }, FRANCHISE_TTL);
+    } catch {
+    }
+  }
+
+  // src/gm.ts
+  function gmMenuCommand(name, fn) {
+    if (typeof GM_registerMenuCommand === "function") GM_registerMenuCommand(name, fn);
+  }
+  var gmTransport = typeof GM_xmlhttpRequest === "function" ? (req) => new Promise((resolve, reject) => {
+    if (req.signal?.aborted) return reject(new AbortError());
+    const h2 = GM_xmlhttpRequest({
+      method: req.method ?? "GET",
+      url: req.url,
+      headers: req.headers,
+      data: req.body,
+      anonymous: true,
+      timeout: req.timeoutMs ?? 15e3,
+      onload: (r) => {
+        const ra = Number(/^retry-after:\s*(\d+)/im.exec(r.responseHeaders)?.[1]);
+        resolve({ status: r.status, text: r.responseText, retryAfter: ra > 0 ? ra : void 0 });
+      },
+      onerror: () => reject(new Error("сетевая ошибка")),
+      ontimeout: () => reject(new Error("таймаут"))
+    });
+    req.signal?.addEventListener("abort", () => {
+      h2.abort();
+      reject(new AbortError());
+    }, { once: true });
+  }) : fetchTransport;
+  function gmKV() {
+    if (typeof GM_getValue !== "function" || typeof GM_setValue !== "function") {
+      return {
+        get: (k) => {
+          const v = localStorage.getItem(`awo:${k}`);
+          return v === null ? void 0 : JSON.parse(v);
+        },
+        set: (k, v) => localStorage.setItem(`awo:${k}`, JSON.stringify(v)),
+        remove: (k) => localStorage.removeItem(`awo:${k}`)
+      };
+    }
+    return {
+      get: (k) => GM_getValue(k, void 0),
+      set: (k, v) => GM_setValue(k, v),
+      remove: (k) => typeof GM_deleteValue === "function" ? GM_deleteValue(k) : GM_setValue(k, void 0)
+    };
   }
 
   // src/sites/animego.ts
@@ -8710,145 +8975,6 @@
     if (to < 0 || to >= out.length) return out;
     out.splice(from, 1);
     out.splice(to, 0, key);
-    return out;
-  }
-
-  // src/matching.ts
-  function normalizeTitle(s) {
-    return s.normalize("NFKC").toLowerCase().replace(/[ё]/g, "е").replace(/[‘’“”`'"«»]/g, "").replace(/[~:;,.!?()[\]{}\-–—_/\\|·•☆★♪♥+*&]/g, " ").replace(/\s+/g, " ").trim();
-  }
-  function alNames(m) {
-    const out = /* @__PURE__ */ new Set();
-    for (const n of [m.romaji, m.english, m.native, ...m.synonyms]) {
-      if (!n) continue;
-      const k = normalizeTitle(n);
-      if (k.length >= 2) out.add(k);
-    }
-    return out;
-  }
-  function siteNames(t) {
-    const out = /* @__PURE__ */ new Set();
-    for (const n of t.names) {
-      const k = normalizeTitle(n);
-      if (k.length >= 2) out.add(k);
-    }
-    return out;
-  }
-  var FORMAT_GROUP = {
-    TV: "series",
-    TV_SHORT: "series",
-    ONA: "series",
-    MOVIE: "movie",
-    OVA: "extra",
-    SPECIAL: "extra",
-    MUSIC: "music",
-    UNKNOWN: "?"
-  };
-  function formatsCompatible(a, b) {
-    if (!a || !b || a === "UNKNOWN" || b === "UNKNOWN") return true;
-    const ga = FORMAT_GROUP[a];
-    const gb = FORMAT_GROUP[b];
-    if (ga === gb) return true;
-    const loose = /* @__PURE__ */ new Set(["series", "extra"]);
-    return a === "ONA" || b === "ONA" ? loose.has(ga) && loose.has(gb) : false;
-  }
-  var pairKey = (alId, siteKey) => `${alId}|${siteKey}`;
-  function candidatesFor(al, site) {
-    if (site.anilistId !== void 0) return site.anilistId === al.id ? "id" : void 0;
-    if (!formatsCompatible(al.format, site.format)) return void 0;
-    const an = alNames(al);
-    for (const n of siteNames(site)) {
-      if (an.has(n)) return yearsCompatible(al.startDate, site.date) ? "name" : void 0;
-    }
-    if (sameExactDate(al.startDate, site.date) && al.format === site.format) return "date";
-    return void 0;
-  }
-  function candidateRank(c) {
-    const dateRank = c.confidence === "name" ? (c.site.date?.year !== void 0 && c.site.date.year === c.al.startDate.year ? 2 : 0) + (sameExactDate(c.site.date, c.al.startDate) ? 1 : 0) : 0;
-    return RANK2[c.confidence] * 4 + dateRank;
-  }
-  var RANK2 = { site: 4, id: 3, name: 2, date: 1 };
-  function matchTitles(alNodes, pool, rejected = /* @__PURE__ */ new Set()) {
-    const all = [];
-    for (const al of alNodes) {
-      for (const site of pool) {
-        if (rejected.has(pairKey(al.id, site.key))) continue;
-        const c = candidatesFor(al, site);
-        if (c) all.push({ al, site, confidence: c });
-      }
-    }
-    const best = (key) => {
-      const m = /* @__PURE__ */ new Map();
-      for (const c of all) {
-        const k = key(c);
-        const cur = m.get(k);
-        if (!cur || candidateRank(c) > candidateRank(cur[0])) m.set(k, [c]);
-        else if (candidateRank(c) === candidateRank(cur[0])) cur.push(c);
-      }
-      return m;
-    };
-    const byAl = best((c) => c.al.id);
-    const bySite = best((c) => c.site.key);
-    const out = /* @__PURE__ */ new Map();
-    for (const [alId, cands] of byAl) {
-      if (cands.length !== 1) continue;
-      const c = cands[0];
-      const back = bySite.get(c.site.key);
-      if (!back || back.length !== 1 || back[0].al.id !== alId) continue;
-      out.set(alId, { title: c.site, confidence: c.confidence });
-    }
-    return out;
-  }
-  function pickVerified(current, results) {
-    const m = matchTitles(results, [current]);
-    const hits = [...m.entries()].filter(([, v]) => v.confidence !== "date");
-    if (hits.length !== 1) return void 0;
-    return results.find((r) => r.id === hits[0][0]);
-  }
-  function partName(name) {
-    const m = normalizeTitle(name).match(/^(.+?)\s+(?:(?:part|часть)\s+)?(\d+)$/);
-    return m && m[1].length >= 6 ? { base: m[1], number: Number(m[2]) } : void 0;
-  }
-  function nextPart(primary, title, al) {
-    for (const name of primary.names) {
-      const a = partName(name);
-      if (!a) continue;
-      if (![...alNames(al)].some((n) => partName(n)?.base === a.base)) continue;
-      if (title.names.some((n) => {
-        const b = partName(n);
-        return b?.base === a.base && b.number === a.number + 1;
-      })) return true;
-    }
-    return false;
-  }
-  function matchParts(nodes, matches, pool, rejected = /* @__PURE__ */ new Set()) {
-    const used = new Set([...matches.values()].map((m) => m.title.key));
-    const proposals = /* @__PURE__ */ new Map();
-    const bundled = /* @__PURE__ */ new Set([
-      "13329--rezero-kara-hajimeru-isekai-seikatsu-memory-snow-anime",
-      "14685--rezero-kara-hajimeru-isekai-seikatsu-hyouketsu-no-kizuna-anime"
-    ]);
-    for (const al of nodes) {
-      const primary = matches.get(al.id)?.title;
-      if (!primary) continue;
-      for (const title of pool) {
-        if (used.has(title.key) || rejected.has(pairKey(al.id, title.key)) || title.anilistId !== void 0 && title.anilistId !== al.id || !primary.format || primary.format === "UNKNOWN" || title.format !== primary.format || !primary.date?.year || !title.date?.year || !yearsCompatible(primary.date, title.date) || !yearsCompatible(al.startDate, title.date)) continue;
-        const bundle = al.id === 100049 && bundled.has(primary.key) && bundled.has(title.key);
-        if (!bundle && !nextPart(primary, title, al)) continue;
-        const list = proposals.get(title.key) ?? [];
-        list.push({ id: al.id, match: { title, confidence: title.anilistId === al.id ? "id" : "name" } });
-        proposals.set(title.key, list);
-      }
-    }
-    const out = /* @__PURE__ */ new Map();
-    for (const proposalsForTitle of proposals.values()) {
-      if (proposalsForTitle.length !== 1) continue;
-      const { id: id2, match } = proposalsForTitle[0];
-      const list = out.get(id2) ?? [];
-      list.push(match);
-      out.set(id2, list);
-    }
-    for (const [id2, titles] of out) if (titles.length !== 1) out.delete(id2);
     return out;
   }
 
@@ -10191,9 +10317,9 @@ summary{cursor:pointer;color:var(--muted)}
   async function loadGraph(rootId, { anilist, ctx }) {
     const raw = await ctx.cache.wrap("anilist-graph", String(rootId), 24 * HOUR, async () => {
       const g = await anilist.loadFranchise(rootId, ctx.signal);
-      return { nodes: [...g.nodes.values()], truncated: g.truncated };
+      return { nodes: [...g.nodes.values()], truncated: g.truncated, reusableRootIds: g.reusableRootIds };
     }, ctx.force);
-    return { rootId, nodes: new Map(raw.nodes.map((m) => [m.id, m])), truncated: raw.truncated };
+    return { rootId, nodes: new Map(raw.nodes.map((m) => [m.id, m])), truncated: raw.truncated, reusableRootIds: raw.reusableRootIds };
   }
   function baseName(s) {
     if (!s || !hasLatin(s)) return void 0;
@@ -10213,6 +10339,7 @@ summary{cursor:pointer;color:var(--muted)}
         out.push(...await ctx.cache.wrap(`site-search:${adapter.id}`, q.toLowerCase(), 3 * DAY, () => adapter.search(q, ctx), ctx.force));
       } catch (e) {
         if (isAbort(e)) throw e;
+        deps.onSearchFailure?.();
       }
     }
     return out;
@@ -10300,37 +10427,65 @@ summary{cursor:pointer;color:var(--muted)}
     };
   }
   async function buildWatchOrder(key, deps) {
+    const ctx = { ...deps.ctx, cache: deps.ctx.cache.withSignal(deps.ctx.signal) };
+    return build(key, { ...deps, ctx });
+  }
+  async function build(key, deps) {
     const { adapter, ctx, user } = deps;
-    let current = await adapter.loadCurrent(key, ctx);
-    const notes = [];
+    const cached = cachedWatchOrder(key, deps);
+    if (cached) return cached;
+    if (preparedNeedsRefresh(key, deps)) return build(key, { ...deps, ctx: { ...ctx, force: true } });
+    const seed = cachedFranchise(key, deps);
+    let current = seed?.current ?? await adapter.loadCurrent(key, ctx);
+    const notes = seed ? [...seed.snapshot.result.notes] : [];
+    let complete = true;
+    let searchFailed = false;
+    const searchDeps = { ...deps, onSearchFailure: () => {
+      complete = false;
+      searchFailed = true;
+    } };
     let related = [];
-    try {
-      const result = await adapter.loadRelated(current, ctx);
-      related = result.titles.filter((t) => t.format !== "MUSIC");
-      if (result.partial) notes.push("Часть связей с сайта не загрузилась, список может быть неполным.");
+    if (seed) related = seed.related;
+    else try {
+      const result2 = await adapter.loadRelated(current, ctx);
+      related = result2.titles.filter((t) => t.format !== "MUSIC");
+      if (result2.partial) {
+        complete = false;
+        notes.push("Часть связей с сайта не загрузилась, список может быть неполным.");
+      }
     } catch (e) {
       if (isAbort(e)) throw e;
+      complete = false;
       notes.push("Не удалось загрузить связи с сайта.");
     }
     const queried = /* @__PURE__ */ new Set();
-    const searched = await searchFranchise(current.names.map(baseName), queried, deps);
+    const searched = seed?.searched ?? await searchFranchise(current.names.map(baseName), queried, searchDeps);
     current = enrich(current, indexTitles(searched));
     let rootId;
     let g;
     try {
-      rootId = await resolveRoot(current, deps);
+      rootId = seed?.graph.rootId ?? await resolveRoot(current, deps);
       if (rootId === void 0) {
-        return siteOnly(current, related, adapter, [...notes, "Тайтл не найден в AniList однозначно."]);
+        const result2 = siteOnly(current, related, adapter, [...notes, "Тайтл не найден в AniList однозначно."]);
+        cachePreparedOrder(key, result2, deps);
+        return result2;
       }
-      g = await loadGraph(rootId, deps);
-      if (!g.nodes.has(rootId)) return siteOnly(current, related, adapter, [...notes, "AniList не вернул данные тайтла."]);
+      g = seed?.graph ?? await loadGraph(rootId, deps);
+      if (!g.nodes.has(rootId)) {
+        const result2 = siteOnly(current, related, adapter, [...notes, "AniList не вернул данные тайтла."]);
+        cachePreparedOrder(key, result2, deps);
+        return result2;
+      }
     } catch (e) {
       if (isAbort(e)) throw e;
-      return siteOnly(current, related, adapter, [...notes, `AniList недоступен (${e instanceof Error ? e.message : "ошибка"}).`]);
+      const result2 = siteOnly(current, related, adapter, [...notes, `AniList недоступен (${e instanceof Error ? e.message : "ошибка"}).`]);
+      cachePreparedOrder(key, result2, deps);
+      return result2;
     }
     if (g.truncated) notes.push("Франшиза большая: показана часть, обход упёрся в лимит.");
-    let profile = profileForId(rootId);
-    if (deps.community) {
+    let profile = seed?.snapshot.result.orderProfile?.anchorIds.includes(rootId) ? seed.snapshot.result.orderProfile : profileForId(rootId);
+    if (seed && !profile && deps.community) profile = deps.community.peek(rootId, ctx);
+    if (!seed && deps.community) {
       const imported = await deps.community.load(rootId, ctx);
       if (!profile) profile = imported.profile;
       else if (imported.profile?.chronological) {
@@ -10345,7 +10500,8 @@ summary{cursor:pointer;color:var(--muted)}
     if (profile) {
       const routes = [profile.recommended, ...profile.chronologicalVariants ?? (profile.chronological ? [profile.chronological] : [])];
       const ids = [...new Set(routes.flatMap((route) => route.steps).map((step) => step.alId))].filter((id2) => !g.nodes.has(id2));
-      if (ids.length) {
+      if (ids.length && seed) return build(key, { ...deps, ctx: { ...ctx, force: true } });
+      if (ids.length && !seed) {
         try {
           const nodes = await ctx.cache.wrap(
             `profile-nodes:${profile.id}:${profile.checkedAt}`,
@@ -10363,6 +10519,7 @@ summary{cursor:pointer;color:var(--muted)}
           for (const node of nodes) g.nodes.set(node.id, node);
         } catch (e) {
           if (isAbort(e)) throw e;
+          complete = false;
           notes.push("Не удалось загрузить все части проверенного маршрута.");
         }
       }
@@ -10371,7 +10528,7 @@ summary{cursor:pointer;color:var(--muted)}
     const ordering = buildOrdering(g);
     const first = g.nodes.get(ordering.main[0]?.id ?? rootId);
     const queries = [baseName(first.romaji), baseName(first.english), baseName(root.romaji), baseName(root.english)];
-    searched.push(...await searchFranchise(queries, queried, deps));
+    if (!seed) searched.push(...await searchFranchise(queries, queried, searchDeps));
     const byKey = indexTitles(searched);
     const pool = [current, ...related.filter((t) => t.key !== current.key).map((t) => enrich(t, byKey))];
     const poolKeys = new Set(pool.map((t) => t.key));
@@ -10386,7 +10543,8 @@ summary{cursor:pointer;color:var(--muted)}
     };
     const branchIds = [...ordering.branches].sort((a, b) => Number(a.kind === "other") - Number(b.kind === "other")).map((n) => n.id);
     const preferredIds = profile?.recommended.steps.map((step) => step.alId).filter((id2) => g.nodes.has(id2)) ?? [];
-    await searchMissing([[.../* @__PURE__ */ new Set([...preferredIds, ...ordering.all.map((n) => n.id)])], branchIds], g, candidates, queried, rematch, deps);
+    if (!seed) await searchMissing([[.../* @__PURE__ */ new Set([...preferredIds, ...ordering.all.map((n) => n.id)])], branchIds], g, candidates, queried, rematch, searchDeps);
+    if (searchFailed) notes.push("Часть поиска по каталогу не выполнилась, ссылки могут быть неполными.");
     const matches = rematch();
     const parts = matchParts(g.nodes.values(), matches, [...indexTitles(candidates).values()], user.rejected());
     const expand = (n) => {
@@ -10424,7 +10582,7 @@ summary{cursor:pointer;color:var(--muted)}
       cover: t.cover,
       coverLarge: t.cover
     }));
-    return {
+    const result = {
       mode: "anilist",
       rootAlId: rootId,
       orderProfile: profile,
@@ -10434,6 +10592,15 @@ summary{cursor:pointer;color:var(--muted)}
       branches: [...ordering.branches.flatMap(expand), ...orphans],
       notes
     };
+    cachePreparedOrder(key, result, deps, {
+      graph: g,
+      candidates: [...indexTitles(candidates).values()],
+      relatedKeys: poolKeys,
+      matches,
+      hasParts: new Set(parts.keys()),
+      complete: complete && !g.truncated
+    }, seed);
+    return result;
   }
 
   // src/main.ts
@@ -10449,6 +10616,11 @@ summary{cursor:pointer;color:var(--muted)}
       s.ctrl.abort();
       s.ctrl = new AbortController();
       const ctx = { signal: s.ctrl.signal, cache, force };
+      const cached = cachedWatchOrder(s.key, { adapter, ctx, user });
+      if (cached) {
+        s.view.set({ status: "ready", result: cached });
+        return;
+      }
       s.view.set({ status: "loading" });
       const timer = setTimeout(() => {
         if (session !== s || ctx.signal.aborted) return;

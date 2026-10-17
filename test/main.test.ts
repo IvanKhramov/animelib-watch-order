@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LoadCtx } from '../src/sites/site';
 import type { OrderResult } from '../src/types';
+import { cachePreparedOrder } from '../src/franchiseCache';
+import { Cache, UserState } from '../src/storage';
 
 interface Handlers {
   refresh(): void;
@@ -18,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   watchRoute: vi.fn(),
   watchDom: vi.fn(),
   gmMenuCommand: vi.fn(),
+  states: [] as unknown[],
 }));
 
 vi.mock('../src/gm', () => ({
@@ -40,7 +43,7 @@ vi.mock('../src/watchOrder', () => ({ buildWatchOrder: mocks.load }));
 vi.mock('../src/ui', () => ({
   WatchOrderView: class {
     root = document.createElement('div');
-    set = vi.fn();
+    set = vi.fn((state: unknown) => { mocks.states.push(state); });
     syncTheme = vi.fn();
     constructor(_user: unknown, handlers: Handlers) {
       this.root.setAttribute('data-awo', '');
@@ -57,6 +60,7 @@ beforeEach(() => {
   document.body.innerHTML = '<div class="section-body"><div class="section-title">Связанное</div></div>';
   window.location.href = 'https://animelib.org/ru/anime/1--first';
   mocks.data.clear();
+  mocks.states.length = 0;
   mocks.handlers.length = 0;
   mocks.menu = undefined;
   mocks.route = undefined;
@@ -75,6 +79,23 @@ afterEach(() => {
 });
 
 describe('запуск userscript', () => {
+  it('готовый кэш показывает сразу, без повторной загрузки и loading-состояния', async () => {
+    const kv = {
+      get: <T>(key: string) => mocks.data.get(key) as T | undefined,
+      set: (key: string, value: unknown) => { mocks.data.set(key, value); },
+      remove: (key: string) => { mocks.data.delete(key); },
+    };
+    const result: OrderResult = { mode: 'site-only', franchiseKey: 'site:animelib:1--first', items: [], branches: [], notes: [] };
+    cachePreparedOrder('1--first', result, { adapter: { id: 'animelib' }, user: new UserState(kv),
+      ctx: { cache: new Cache(kv), signal: new AbortController().signal, force: false } });
+    await import('../src/main');
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(mocks.states).toEqual([{ status: 'ready', result }]);
+    mocks.handlers[0]!.refresh();
+    expect(mocks.load).toHaveBeenCalledTimes(1);
+    expect(mocks.load.mock.calls[0]![1].ctx.force).toBe(true);
+  });
+
   it('вторая изолированная копия выходит до запросов и наблюдателей', async () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => {});
     await import('../src/main');

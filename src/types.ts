@@ -57,6 +57,8 @@ export interface FranchiseGraph {
   nodes: Map<number, AlMedia>;
   /** true, если обход упёрся в лимиты и граф может быть неполным */
   truncated: boolean;
+  /** Узлы, раскрытые полностью: только для них можно переиспользовать граф при смене корня. */
+  reusableRootIds?: number[];
 }
 
 /** Грубая классификация связи, увиденной на сайте. */

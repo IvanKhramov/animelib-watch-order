@@ -105,6 +105,15 @@ export function communityProfile(catalogue: CommunityCatalogue, rootId: number):
 export class CommunityOrdersClient {
   constructor(private readonly transport: Transport) {}
 
+  /** Переход внутри уже загруженной франшизы не должен запускать обновление фида. */
+  peek(rootId: number, ctx: Pick<LoadCtx, 'cache'>): OrderProfile | undefined {
+    const latest = parseCatalogue(ctx.cache.get(NS, 'latest'));
+    const saved = parseCatalogue(ctx.cache.get(NS, 'last-good'));
+    const bundled = parseCatalogue(snapshot)!;
+    const fallback = saved && Date.parse(saved.updatedAt) >= Date.parse(bundled.updatedAt) ? saved : bundled;
+    return communityProfile(latest ?? fallback, rootId);
+  }
+
   async load(rootId: number, ctx: LoadCtx): Promise<{ profile?: OrderProfile; note?: string }> {
     const cached = !ctx.force ? parseCatalogue(ctx.cache.get(NS, 'latest')) : undefined;
     if (cached) return { profile: communityProfile(cached, rootId) };

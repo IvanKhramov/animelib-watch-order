@@ -1,6 +1,7 @@
 import { AniListClient } from './anilistAdapter';
 import type { CommunityOrdersClient } from './communityOrders';
 import { dateKey } from './dates';
+import { cachedFranchise, cachedWatchOrder, cachePreparedOrder, preparedNeedsRefresh } from './franchiseCache';
 import { isAbort } from './http';
 import { matchParts, matchTitles, pickVerified } from './matching';
 import { buildOrdering, type OrderedNode } from './orderPolicy';
@@ -27,6 +28,7 @@ export interface Deps {
   user: UserState;
   ctx: LoadCtx;
 }
+interface SearchDeps extends Deps { onSearchFailure?: () => void }
 
 const hasLatin = (s: string) => /[a-z]/i.test(s) && !/[а-яё]/i.test(s);
 
@@ -47,9 +49,9 @@ async function resolveRoot(current: SiteTitle, { anilist, ctx }: Deps): Promise<
 async function loadGraph(rootId: number, { anilist, ctx }: Deps): Promise<FranchiseGraph> {
   const raw = await ctx.cache.wrap('anilist-graph', String(rootId), 24 * HOUR, async () => {
     const g = await anilist.loadFranchise(rootId, ctx.signal);
-    return { nodes: [...g.nodes.values()], truncated: g.truncated };
+    return { nodes: [...g.nodes.values()], truncated: g.truncated, reusableRootIds: g.reusableRootIds };
   }, ctx.force);
-  return { rootId, nodes: new Map(raw.nodes.map((m: AlMedia) => [m.id, m])), truncated: raw.truncated };
+  return { rootId, nodes: new Map(raw.nodes.map((m: AlMedia) => [m.id, m])), truncated: raw.truncated, reusableRootIds: raw.reusableRootIds };
 }
 
 /** Общее название франшизы для поиска по каталогу: "Haikyuu!! To the Top Part 2" -> "Haikyuu!! To the Top". */
@@ -64,7 +66,7 @@ export function baseName(s: string | undefined): string | undefined {
 }
 
 /** Поиск по каталогу сайта по общему названию: одним запросом находит почти всю франшизу. */
-async function searchFranchise(queries: (string | undefined)[], done: Set<string>, deps: Deps, max = 2): Promise<SiteTitle[]> {
+async function searchFranchise(queries: (string | undefined)[], done: Set<string>, deps: SearchDeps, max = 2): Promise<SiteTitle[]> {
   const { adapter, ctx } = deps;
   if (!adapter.search) return [];
   const out: SiteTitle[] = [];
@@ -77,6 +79,7 @@ async function searchFranchise(queries: (string | undefined)[], done: Set<string
       out.push(...(await ctx.cache.wrap(`site-search:${adapter.id}`, q.toLowerCase(), 3 * DAY, () => adapter.search!(q, ctx), ctx.force)));
     } catch (e) {
       if (isAbort(e)) throw e;
+      deps.onSearchFailure?.();
     }
   }
   return out;
@@ -107,7 +110,7 @@ function indexTitles(titles: SiteTitle[]): Map<string, SiteTitle> {
 /** Поиск оставшихся узлов по их названию. Принимаем только проверенное совпадение (id или название + год). */
 async function searchMissing(
   groups: number[][], g: FranchiseGraph, candidates: SiteTitle[], queried: Set<string>,
-  rematch: () => Map<number, SiteMatch>, deps: Deps,
+  rematch: () => Map<number, SiteMatch>, deps: SearchDeps,
 ) {
   // Девять запросов основной линии, три оставляем веткам. Все ответы пополняют общий пул.
   for (const [group, ids] of groups.entries()) {
@@ -180,43 +183,70 @@ function siteOnly(current: SiteTitle, related: SiteTitle[], adapter: SiteAdapter
 }
 
 export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderResult> {
+  const ctx = { ...deps.ctx, cache: deps.ctx.cache.withSignal(deps.ctx.signal) };
+  return build(key, { ...deps, ctx });
+}
+
+async function build(key: string, deps: Deps): Promise<OrderResult> {
   const { adapter, ctx, user } = deps;
-  let current = await adapter.loadCurrent(key, ctx);
-  const notes: string[] = [];
+  const cached = cachedWatchOrder(key, deps);
+  if (cached) return cached;
+  if (preparedNeedsRefresh(key, deps)) return build(key, { ...deps, ctx: { ...ctx, force: true } });
+  const seed = cachedFranchise(key, deps);
+  let current = seed?.current ?? await adapter.loadCurrent(key, ctx);
+  const notes: string[] = seed ? [...seed.snapshot.result.notes] : [];
+  let complete = true;
+  let searchFailed = false;
+  const searchDeps: SearchDeps = { ...deps, onSearchFailure: () => { complete = false; searchFailed = true; } };
   let related: SiteTitle[] = [];
-  try {
+  if (seed) related = seed.related;
+  else try {
     const result = await adapter.loadRelated(current, ctx);
     related = result.titles.filter((t) => t.format !== 'MUSIC');
-    if (result.partial) notes.push('Часть связей с сайта не загрузилась, список может быть неполным.');
+    if (result.partial) {
+      complete = false;
+      notes.push('Часть связей с сайта не загрузилась, список может быть неполным.');
+    }
   } catch (e) {
     if (isAbort(e)) throw e;
+    complete = false;
     notes.push('Не удалось загрузить связи с сайта.');
   }
 
   // поиск по каталогу сайта: даёт anilist_id тем, у кого его нет в карточке и связях
   const queried = new Set<string>();
-  const searched = await searchFranchise(current.names.map(baseName), queried, deps);
+  const searched = seed?.searched ?? await searchFranchise(current.names.map(baseName), queried, searchDeps);
   current = enrich(current, indexTitles(searched));
 
   let rootId: number | undefined;
   let g: FranchiseGraph;
   try {
-    rootId = await resolveRoot(current, deps);
+    rootId = seed?.graph.rootId ?? await resolveRoot(current, deps);
     if (rootId === undefined) {
-      return siteOnly(current, related, adapter, [...notes, 'Тайтл не найден в AniList однозначно.']);
+      const result = siteOnly(current, related, adapter, [...notes, 'Тайтл не найден в AniList однозначно.']);
+      cachePreparedOrder(key, result, deps);
+      return result;
     }
-    g = await loadGraph(rootId, deps);
-    if (!g.nodes.has(rootId)) return siteOnly(current, related, adapter, [...notes, 'AniList не вернул данные тайтла.']);
+    g = seed?.graph ?? await loadGraph(rootId, deps);
+    if (!g.nodes.has(rootId)) {
+      const result = siteOnly(current, related, adapter, [...notes, 'AniList не вернул данные тайтла.']);
+      cachePreparedOrder(key, result, deps);
+      return result;
+    }
   } catch (e) {
     if (isAbort(e)) throw e;
-    return siteOnly(current, related, adapter, [...notes, `AniList недоступен (${e instanceof Error ? e.message : 'ошибка'}).`]);
+    const result = siteOnly(current, related, adapter, [...notes, `AniList недоступен (${e instanceof Error ? e.message : 'ошибка'}).`]);
+    cachePreparedOrder(key, result, deps);
+    return result;
   }
   if (g.truncated) notes.push('Франшиза большая: показана часть, обход упёрся в лимит.');
 
   // Граф из альтернативной точки входа может не дойти до частей проверенного маршрута.
   // Один дополнительный пакет только по известным ID, без расширения соседних франшиз.
-  let profile = profileForId(rootId);
-  if (deps.community) {
+  let profile = seed?.snapshot.result.orderProfile?.anchorIds.includes(rootId)
+    ? seed.snapshot.result.orderProfile : profileForId(rootId);
+  if (seed && !profile && deps.community) profile = deps.community.peek(rootId, ctx);
+  if (!seed && deps.community) {
     const imported = await deps.community.load(rootId, ctx);
     if (!profile) profile = imported.profile;
     else if (imported.profile?.chronological) {
@@ -232,7 +262,9 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
     const routes = [profile.recommended, ...(profile.chronologicalVariants ?? (profile.chronological ? [profile.chronological] : []))];
     const ids = [...new Set(routes.flatMap((route) => route.steps).map((step) => step.alId))]
       .filter((id) => !g.nodes.has(id));
-    if (ids.length) {
+    // В новой ветке может появиться другой профиль с ещё не загруженными частями.
+    if (ids.length && seed) return build(key, { ...deps, ctx: { ...ctx, force: true } });
+    if (ids.length && !seed) {
       try {
         const nodes = await ctx.cache.wrap(`profile-nodes:${profile.id}:${profile.checkedAt}`, ids.join(','), DAY,
           async () => {
@@ -245,6 +277,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
         for (const node of nodes) g.nodes.set(node.id, node);
       } catch (e) {
         if (isAbort(e)) throw e;
+        complete = false;
         notes.push('Не удалось загрузить все части проверенного маршрута.');
       }
     }
@@ -255,7 +288,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   // самый ранний тайтл основной линии обычно несёт общее название франшизы
   const first = g.nodes.get(ordering.main[0]?.id ?? rootId)!;
   const queries = [baseName(first.romaji), baseName(first.english), baseName(root.romaji), baseName(root.english)];
-  searched.push(...(await searchFranchise(queries, queried, deps)));
+  if (!seed) searched.push(...(await searchFranchise(queries, queried, searchDeps)));
   const byKey = indexTitles(searched);
   const pool = [current, ...related.filter((t) => t.key !== current.key).map((t) => enrich(t, byKey))];
   const poolKeys = new Set(pool.map((t) => t.key));
@@ -275,7 +308,8 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
     .sort((a, b) => Number(a.kind === 'other') - Number(b.kind === 'other'))
     .map((n) => n.id);
   const preferredIds = profile?.recommended.steps.map((step) => step.alId).filter((id) => g.nodes.has(id)) ?? [];
-  await searchMissing([[...new Set([...preferredIds, ...ordering.all.map((n) => n.id)])], branchIds], g, candidates, queried, rematch, deps);
+  if (!seed) await searchMissing([[...new Set([...preferredIds, ...ordering.all.map((n) => n.id)])], branchIds], g, candidates, queried, rematch, searchDeps);
+  if (searchFailed) notes.push('Часть поиска по каталогу не выполнилась, ссылки могут быть неполными.');
   const matches = rematch();
   const parts = matchParts(g.nodes.values(), matches, [...indexTitles(candidates).values()], user.rejected());
   const expand = (n: OrderedNode): OrderItem[] => {
@@ -318,7 +352,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
       coverLarge: t.cover,
     }));
 
-  return {
+  const result: OrderResult = {
     mode: 'anilist',
     rootAlId: rootId,
     orderProfile: profile,
@@ -328,4 +362,9 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
     branches: [...ordering.branches.flatMap(expand), ...orphans],
     notes,
   };
+  cachePreparedOrder(key, result, deps, {
+    graph: g, candidates: [...indexTitles(candidates).values()], relatedKeys: poolKeys, matches,
+    hasParts: new Set(parts.keys()), complete: complete && !g.truncated,
+  }, seed);
+  return result;
 }

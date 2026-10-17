@@ -1,6 +1,7 @@
 import type { CustomOrder } from './customOrder';
 import { isObj } from './guards';
 import type { WatchOrderMode } from './orderProfiles';
+import { AbortError } from './http';
 
 /** Хранилище ключ-значение. В userscript это GM_getValue/GM_setValue, в тестах Map. */
 export interface KV {
@@ -12,7 +13,7 @@ export interface KV {
 /** Версия пользовательских данных (отметки, порядок, настройки). Менять только с миграцией. */
 export const SCHEMA = 'v1';
 /** Версия кэша: при смене формата данных старые записи просто перестают читаться. */
-export const CACHE_SCHEMA = 'v3';
+export const CACHE_SCHEMA = 'v4';
 
 export function memoryKV(): KV {
   const m = new Map<string, unknown>();
@@ -35,7 +36,13 @@ export class Cache {
   constructor(
     private readonly kv: KV,
     private readonly now: () => number = Date.now,
+    private readonly signal?: AbortSignal,
   ) {}
+
+  /** Отменённая загрузка не должна перезаписать результаты более новой. */
+  withSignal(signal: AbortSignal): Cache {
+    return new Cache(this.kv, this.now, signal);
+  }
 
   private key(ns: string, k: string) {
     return `cache:${CACHE_SCHEMA}:${ns}:${k}`;
@@ -48,6 +55,7 @@ export class Cache {
   }
 
   set(ns: string, k: string, v: unknown, ttlMs: number) {
+    if (this.signal?.aborted) throw new AbortError();
     this.kv.set(this.key(ns, k), { exp: this.now() + ttlMs, v });
   }
 
