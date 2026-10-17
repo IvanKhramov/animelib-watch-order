@@ -194,7 +194,7 @@ export class WatchOrderView {
     const hidden = new Set(custom?.hidden ?? []);
     const all = keys.map((k) => byKey.get(k)!);
     const showAll = prefs.view === 'all' || res.mode !== 'anilist';
-    const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === 'main' || i.isCurrent));
+    const visible = all.filter((i) => !hidden.has(i.watchKey) && (showAll || i.kind === 'main' || (i.isCurrent && i.kind !== 'recap')));
     return { keys, all, visible, hiddenItems: all.filter((i) => hidden.has(i.watchKey)), custom };
   }
 
@@ -307,9 +307,10 @@ export class WatchOrderView {
 
   private summary(res: OrderResult): string {
     const { visible } = this.arranged(res);
-    const main = visible.filter((i) => i.kind === 'main');
+    const main = visible.filter((i) => i.kind === 'main' && !i.continuation);
     const watched = main.filter((i) => this.user.isWatched(i.watchKey)).length;
-    const pos = main.findIndex((i) => i.isCurrent);
+    const current = visible.find((i) => i.isCurrent);
+    const pos = main.findIndex((i) => i.isCurrent || (current?.continuation && i.alId === current.alId));
     const parts: string[] = [];
     if (pos >= 0 && res.mode === 'anilist') parts.push(`вы здесь: ${pos + 1} из ${main.length}`);
     if (watched > 0) parts.push(`просмотрено ${watched} из ${main.length}`);
@@ -333,7 +334,7 @@ export class WatchOrderView {
       const visibleKeys = new Set(visible.map((i) => i.watchKey));
       let n = 0;
       for (const it of visible) {
-        const index = res.mode === 'anilist' && it.kind === 'main' ? ++n : undefined;
+        const index = res.mode === 'anilist' && it.kind === 'main' && !it.continuation ? ++n : undefined;
         list.append(this.row(it, index, { keys, visibleKeys, franchise: res.franchiseKey, hidden: custom?.hidden ?? [] }));
       }
       out.push(list);

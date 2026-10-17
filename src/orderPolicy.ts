@@ -115,10 +115,13 @@ const KIND_BY_REL: Partial<Record<AlRelation, ItemKind>> = {
   COMPILATION: 'recap',
 };
 
+// Madoka 1-2 пересказывают сериал, но AniList размечает их ALTERNATIVE, без SUMMARY.
+const RECAP_IDS = new Set([11977, 11979]);
+
 const RECAP_RE = /\brecap\b|soushuu|総集編|\bcompilation\b|\bdigest\b/i;
 
 export function isRecap(m: AlMedia): boolean {
-  return [m.romaji, m.english, ...m.synonyms].some((t) => !!t && RECAP_RE.test(t));
+  return RECAP_IDS.has(m.id) || [m.romaji, m.english, ...m.synonyms].some((t) => !!t && RECAP_RE.test(t));
 }
 
 export function buildOrdering(g: FranchiseGraph): Ordering {
@@ -129,10 +132,20 @@ export function buildOrdering(g: FranchiseGraph): Ordering {
 
   // если текущий тайтл сам по себе сайд-стори без сиквелов, основная линия идёт от его «родителя»
   const isLine = (id: number) => (adj.get(id) ?? []).some((e) => e.rel === 'PREQUEL' || e.rel === 'SEQUEL');
+  const recaps = new Set([...g.nodes.values()].filter(isRecap).map((m) => m.id));
+  // AniList: оригинал -> SUMMARY -> пересказ, обратно PARENT (Hibike, Koyomi Vamp).
+  // Один PARENT недостаточен: так же связаны обычные OVA и сайд-стори.
+  for (const m of g.nodes.values()) {
+    for (const e of m.edges) {
+      if (e.type === 'ANIME' && (e.rel === 'SUMMARY' || e.rel === 'COMPILATION') && g.nodes.has(e.id)) recaps.add(e.id);
+    }
+  }
   let seed = g.rootId;
-  if (!isLine(seed)) {
-    const parent = (adj.get(seed) ?? []).find((e) => e.rel === 'PARENT' && isLine(e.id));
-    if (parent) seed = parent.id;
+  if (recaps.has(seed) || !isLine(seed)) {
+    const parent = (adj.get(seed) ?? []).find((e) => e.rel === 'PARENT' && !recaps.has(e.id) && isLine(e.id));
+    const original = parent ?? (recaps.has(seed) ? (adj.get(seed) ?? []).find((e) =>
+      e.rel === 'ALTERNATIVE' && !recaps.has(e.id) && g.nodes.get(e.id)!.format === 'TV' && isLine(e.id)) : undefined);
+    if (original) seed = original.id;
   }
 
   // основная линия: компонента связности по PREQUEL/SEQUEL
@@ -147,18 +160,70 @@ export function buildOrdering(g: FranchiseGraph): Ordering {
       }
     }
   }
-  const mainIds = orderMain([...mainSet], g, adj, flags);
+  // В одной компоненте могут встретиться взаимоисключающие экранизации.
+  const lineLinks = (id: number) => new Set((adj.get(id) ?? [])
+    .filter((e) => mainSet.has(e.id) && !recaps.has(e.id) && (e.rel === 'PREQUEL' || e.rel === 'SEQUEL'))
+    .map((e) => e.id)).size;
+  const preferred = [...mainSet].filter((id) => !recaps.has(id)).sort((a, b) =>
+    lineLinks(b) - lineLinks(a) ||
+    Number(g.nodes.get(b)!.format === 'TV') - Number(g.nodes.get(a)!.format === 'TV') ||
+    (g.nodes.get(b)!.episodes ?? 0) - (g.nodes.get(a)!.episodes ?? 0) || byDate(g.nodes)(a, b));
+  const alternatives = new Set<number>();
+  const selected = new Set<number>();
+  for (const id of preferred) {
+    if ((adj.get(id) ?? []).some((e) => e.rel === 'ALTERNATIVE' && selected.has(e.id))) alternatives.add(id);
+    else selected.add(id);
+  }
+  // Продолжение исключённого маршрута тоже остаётся в ветках, общий приквел сохраняется.
+  const removed = [...alternatives];
+  while (removed.length) {
+    for (const e of adj.get(removed.pop()!) ?? []) {
+      if (e.rel !== 'SEQUEL' || !mainSet.has(e.id) || alternatives.has(e.id)) continue;
+      const parents = (adj.get(e.id) ?? []).filter((p) => p.rel === 'PREQUEL' && mainSet.has(p.id));
+      if (parents.every((p) => alternatives.has(p.id))) {
+        alternatives.add(e.id);
+        removed.push(e.id);
+      }
+    }
+  }
+  for (const id of alternatives) mainSet.delete(id);
+  let mainIds = orderMain([...mainSet], g, adj, flags);
+
+  // Ранний сериал может быть предпосылкой к альтернативному эпизоду (Steins;Gate 23β).
+  const first = mainIds.find((id) => !recaps.has(id));
+  const prerequisites = first === undefined ? [] : (adj.get(first) ?? [])
+    .filter((e) => e.rel === 'ALTERNATIVE' && !mainSet.has(e.id) && !alternatives.has(e.id) && !recaps.has(e.id) &&
+      g.nodes.get(e.id)!.format === 'TV' && dateKey(g.nodes.get(e.id)!.startDate) < dateKey(g.nodes.get(first)!.startDate))
+    .map((e) => e.id);
+  if (prerequisites.length === 1) {
+    const before = new Set<number>();
+    const pending = [...prerequisites];
+    while (pending.length) {
+      const id = pending.pop()!;
+      if (before.has(id) || mainSet.has(id) || recaps.has(id)) continue;
+      before.add(id);
+      for (const e of adj.get(id) ?? []) if (e.rel === 'PREQUEL') pending.push(e.id);
+    }
+    const ordered = orderMain([...before], g, adj, flags);
+    for (const id of ordered) {
+      mainSet.add(id);
+      alternatives.delete(id);
+      mark(flags, id, 'предыстория по другой ветке');
+    }
+    mainIds = [...ordered, ...mainIds];
+  }
 
   // остальное: обход от основной линии, тип узла по первой связи на пути
   const kind = new Map<number, ItemKind>();
-  for (const id of mainIds) kind.set(id, 'main');
-  const queue = [...mainIds];
+  for (const id of mainIds) kind.set(id, recaps.has(id) ? 'recap' : 'main');
+  for (const id of alternatives) kind.set(id, 'alternative');
+  const queue = [...mainIds, ...alternatives];
   while (queue.length > 0) {
     const id = queue.shift()!;
     const parentKind = kind.get(id)!;
     for (const e of adj.get(id) ?? []) {
       if (kind.has(e.id)) continue;
-      let k: ItemKind = KIND_BY_REL[e.rel] ?? (parentKind === 'main' ? 'extra' : parentKind);
+      let k: ItemKind = KIND_BY_REL[e.rel] ?? (parentKind === 'main' || parentKind === 'recap' ? 'extra' : parentKind);
       // ветка от альтернативы/спин-оффа остаётся в той же ветке
       if (parentKind === 'alternative' || parentKind === 'spinoff' || parentKind === 'other') k = parentKind;
       kind.set(e.id, k);
@@ -166,6 +231,8 @@ export function buildOrdering(g: FranchiseGraph): Ordering {
     }
   }
   for (const id of g.nodes.keys()) if (!kind.has(id)) kind.set(id, 'other');
+  // Семантика пересказа сильнее любой связи, независимо от порядка обхода.
+  for (const id of recaps) kind.set(id, 'recap');
 
   for (const [id, m] of g.nodes) if (!m.startDate.year) mark(flags, id, FLAG_NO_DATE);
 
@@ -177,7 +244,6 @@ export function buildOrdering(g: FranchiseGraph): Ordering {
   });
 
   // рекапы в цепочке сиквелов остаются на своём месте, но без номера и вне режима «Основное»
-  for (const id of mainIds) if (isRecap(g.nodes.get(id)!)) kind.set(id, 'recap');
   let n = 0;
   const main = mainIds.map((id) => node(id, kind.get(id) === 'main' ? ++n : undefined));
   const cmp = byDate(g.nodes);

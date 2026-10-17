@@ -70,6 +70,15 @@ function candidatesFor(al: AlMedia, site: SiteTitle): MatchConfidence | undefine
   return undefined;
 }
 
+function candidateRank(c: Candidate): number {
+  // При равном названии сначала точный год, затем полная дата. ID не уточняем датой.
+  const dateRank = c.confidence === 'name'
+    ? (c.site.date?.year !== undefined && c.site.date.year === c.al.startDate.year ? 2 : 0) +
+      (sameExactDate(c.site.date, c.al.startDate) ? 1 : 0)
+    : 0;
+  return RANK[c.confidence] * 4 + dateRank;
+}
+
 const RANK: Record<MatchConfidence, number> = { site: 4, id: 3, name: 2, date: 1 };
 
 /**
@@ -95,8 +104,8 @@ export function matchTitles(
     for (const c of all) {
       const k = key(c);
       const cur = m.get(k);
-      if (!cur || RANK[c.confidence] > RANK[cur[0]!.confidence]) m.set(k, [c]);
-      else if (RANK[c.confidence] === RANK[cur[0]!.confidence]) cur.push(c);
+      if (!cur || candidateRank(c) > candidateRank(cur[0]!)) m.set(k, [c]);
+      else if (candidateRank(c) === candidateRank(cur[0]!)) cur.push(c);
     }
     return m;
   };
@@ -120,4 +129,63 @@ export function pickVerified(current: SiteTitle, results: AlMedia[]): AlMedia | 
   const hits = [...m.entries()].filter(([, v]) => v.confidence !== 'date');
   if (hits.length !== 1) return undefined;
   return results.find((r) => r.id === hits[0]![0]);
+}
+
+/** Явный номер части в конце названия, без нечёткого сравнения. */
+function partName(name: string): { base: string; number: number } | undefined {
+  const m = normalizeTitle(name).match(/^(.+?)\s+(?:(?:part|часть)\s+)?(\d+)$/);
+  return m && m[1]!.length >= 6 ? { base: m[1]!, number: Number(m[2]) } : undefined;
+}
+
+function nextPart(primary: SiteTitle, title: SiteTitle, al: AlMedia): boolean {
+  for (const name of primary.names) {
+    const a = partName(name);
+    if (!a) continue;
+    // Базовое название должно подтверждаться самой записью AniList.
+    if (![...alNames(al)].some((n) => partName(n)?.base === a.base)) continue;
+    if (title.names.some((n) => {
+      const b = partName(n);
+      return b?.base === a.base && b.number === a.number + 1;
+    })) return true;
+  }
+  return false;
+}
+
+/** Дополнительные карточки принимаются только после однозначного основного сопоставления. */
+export function matchParts(
+  nodes: Iterable<AlMedia>, matches: Map<number, SiteMatch>, pool: SiteTitle[],
+  rejected: ReadonlySet<string> = new Set(),
+): Map<number, SiteMatch[]> {
+  const used = new Set([...matches.values()].map((m) => m.title.key));
+  const proposals = new Map<string, { id: number; match: SiteMatch }[]>();
+  // В AniList 100049 явно объединены Memory Snow и Frozen Bond (два эпизода в записи).
+  const bundled = new Set(['13329--rezero-kara-hajimeru-isekai-seikatsu-memory-snow-anime',
+    '14685--rezero-kara-hajimeru-isekai-seikatsu-hyouketsu-no-kizuna-anime']);
+  for (const al of nodes) {
+    const primary = matches.get(al.id)?.title;
+    if (!primary) continue;
+    for (const title of pool) {
+      if (used.has(title.key) || rejected.has(pairKey(al.id, title.key)) ||
+        (title.anilistId !== undefined && title.anilistId !== al.id) ||
+        !primary.format || primary.format === 'UNKNOWN' || title.format !== primary.format ||
+        !primary.date?.year || !title.date?.year || !yearsCompatible(primary.date, title.date) ||
+        !yearsCompatible(al.startDate, title.date)) continue;
+      const bundle = al.id === 100049 && bundled.has(primary.key) && bundled.has(title.key);
+      if (!bundle && !nextPart(primary, title, al)) continue;
+      const list = proposals.get(title.key) ?? [];
+      list.push({ id: al.id, match: { title, confidence: title.anilistId === al.id ? 'id' : 'name' } });
+      proposals.set(title.key, list);
+    }
+  }
+  const out = new Map<number, SiteMatch[]>();
+  for (const proposalsForTitle of proposals.values()) {
+    if (proposalsForTitle.length !== 1) continue;
+    const { id, match } = proposalsForTitle[0]!;
+    const list = out.get(id) ?? [];
+    list.push(match);
+    out.set(id, list);
+  }
+  // Две карточки одного следующего номера тоже неоднозначны.
+  for (const [id, titles] of out) if (titles.length !== 1) out.delete(id);
+  return out;
 }

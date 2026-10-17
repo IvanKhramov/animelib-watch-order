@@ -1,7 +1,7 @@
 import { AniListClient } from './anilistAdapter';
 import { dateKey } from './dates';
-import { isAbort, limiter } from './http';
-import { matchTitles, pickVerified } from './matching';
+import { isAbort } from './http';
+import { matchParts, matchTitles, pickVerified } from './matching';
 import { buildOrdering, type OrderedNode } from './orderPolicy';
 import type { LoadCtx, SiteAdapter } from './sites/site';
 import { DAY, HOUR, type UserState } from './storage';
@@ -53,7 +53,8 @@ async function loadGraph(rootId: number, { anilist, ctx }: Deps): Promise<Franch
 export function baseName(s: string | undefined): string | undefined {
   if (!s || !hasLatin(s)) return undefined;
   const b = s
-    .split(/[:：]/)[0]!
+    .replace(/\s*\((?:tv|\d{4})\)/gi, '')
+    .split(/[:：](?=\s)/)[0]!
     .replace(/\s+(season\s*\d+|\d+(st|nd|rd|th)\s+season|part\s*\d+|movie.*|ova|[ivx]+|\d+)$/i, '')
     .trim();
   return b.length >= 3 ? b : undefined;
@@ -66,11 +67,11 @@ async function searchFranchise(queries: (string | undefined)[], done: Set<string
   const out: SiteTitle[] = [];
   let n = 0;
   for (const q of queries) {
-    if (!q || done.has(q.toLowerCase()) || n >= max) continue;
+    if (!q || done.has(q.toLowerCase()) || n >= max || done.size >= 12) continue;
     done.add(q.toLowerCase());
     n++;
     try {
-      out.push(...(await adapter.search(q, ctx)));
+      out.push(...(await ctx.cache.wrap(`site-search:${adapter.id}`, q.toLowerCase(), 3 * DAY, () => adapter.search!(q, ctx), ctx.force)));
     } catch (e) {
       if (isAbort(e)) throw e;
     }
@@ -93,29 +94,31 @@ function enrich(t: SiteTitle, byKey: Map<string, SiteTitle>): SiteTitle {
   };
 }
 
+/** Ответы поиска дополняют карточку, не стирая уже известный ID, дату и названия. */
+function indexTitles(titles: SiteTitle[]): Map<string, SiteTitle> {
+  const out = new Map<string, SiteTitle>();
+  for (const title of titles) out.set(title.key, enrich(title, out));
+  return out;
+}
+
 /** Поиск оставшихся узлов по их названию. Принимаем только проверенное совпадение (id или название + год). */
-async function searchMissing(ids: number[], g: FranchiseGraph, matches: Map<number, SiteMatch>, deps: Deps) {
-  const { adapter, ctx, user } = deps;
-  if (!adapter.search) return;
-  const search = adapter.search.bind(adapter);
-  const rejected = user.rejected();
-  const taken = new Set([...matches.values()].map((m) => m.title.key));
-  const run = limiter(2);
-  await Promise.all(
-    ids.slice(0, 10).map((id) =>
-      run(async () => {
-        const al = g.nodes.get(id);
-        if (!al) return;
-        try {
-          const found = await search(al.romaji, ctx);
-          const m = matchTitles([al], found.filter((t) => !taken.has(t.key)), rejected).get(id);
-          if (m && m.confidence !== 'date') matches.set(id, m);
-        } catch (e) {
-          if (isAbort(e)) throw e;
-        }
-      }),
-    ),
-  );
+async function searchMissing(
+  groups: number[][], g: FranchiseGraph, candidates: SiteTitle[], queried: Set<string>,
+  rematch: () => Map<number, SiteMatch>, deps: Deps,
+) {
+  // Девять запросов основной линии, три оставляем веткам. Все ответы пополняют общий пул.
+  for (const [group, ids] of groups.entries()) {
+    const limit = group === 0 ? 9 : 12;
+    for (let alias = 0; alias < 4 && queried.size < limit; alias++) {
+      for (const id of ids) {
+        if (queried.size >= limit) break;
+        if (rematch().has(id)) continue;
+        const al = g.nodes.get(id)!;
+        const q = [al.romaji, al.english, al.synonyms.find(hasLatin), baseName(al.romaji)][alias];
+        candidates.push(...await searchFranchise([q], queried, deps, 1));
+      }
+    }
+  }
 }
 
 function toItem(n: OrderedNode, g: FranchiseGraph, matches: Map<number, SiteMatch>, adapter: SiteAdapter): OrderItem {
@@ -150,7 +153,7 @@ function siteOnly(current: SiteTitle, related: SiteTitle[], adapter: SiteAdapter
     format: t.format ?? 'UNKNOWN',
     formatLabel: t.formatLabel,
     date: t.date,
-    kind: 'main',
+    kind: /обобщение|обзор|рекап/i.test(t.relationLabel ?? t.displayName) ? 'recap' : 'main',
     isCurrent,
     flags: isCurrent ? [] : [t.relationLabel ?? 'связь'],
     match: { title: t, confidence: 'site' },
@@ -160,11 +163,14 @@ function siteOnly(current: SiteTitle, related: SiteTitle[], adapter: SiteAdapter
   const byDate = (a: SiteTitle, b: SiteTitle) => dateKey(a.date) - dateKey(b.date);
   const pre = related.filter((t) => t.relationKind === 'prequel').sort(byDate);
   const seq = related.filter((t) => t.relationKind === 'sequel').sort(byDate);
-  const rest = related.filter((t) => t.relationKind !== 'prequel' && t.relationKind !== 'sequel').sort(byDate);
+  // story сохраняет сюжетные цепочки, но не спин-оффы и альтернативные истории.
+  const story = related.filter((t) => t.relationKind === 'story' &&
+    /предыстория|продолжение|развёрнутая история|изначальная история|обобщение/i.test(t.relationLabel ?? '')).sort(byDate);
+  const rest = related.filter((t) => !pre.includes(t) && !seq.includes(t) && !story.includes(t)).sort(byDate);
   return {
     mode: 'site-only',
     franchiseKey: `site:${adapter.id}:${current.key}`,
-    items: [...pre.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
+    items: [...pre.map((t) => item(t, false)), ...story.map((t) => item(t, false)), item(current, true), ...seq.map((t) => item(t, false))],
     branches: rest.map((t) => ({ ...item(t, false), kind: 'other' as const })),
     notes: [...notes, 'Порядок собран только по связям сайта, без дат выхода: может быть неточным.'],
   };
@@ -187,7 +193,7 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   // поиск по каталогу сайта: даёт anilist_id тем, у кого его нет в карточке и связях
   const queried = new Set<string>();
   const searched = await searchFranchise(current.names.map(baseName), queried, deps);
-  current = enrich(current, new Map(searched.map((t) => [t.key, t])));
+  current = enrich(current, indexTitles(searched));
 
   let rootId: number | undefined;
   let g: FranchiseGraph;
@@ -210,22 +216,51 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
   const first = g.nodes.get(ordering.main[0]?.id ?? rootId)!;
   const queries = [baseName(first.romaji), baseName(first.english), baseName(root.romaji), baseName(root.english)];
   searched.push(...(await searchFranchise(queries, queried, deps)));
-  const byKey = new Map(searched.map((t) => [t.key, t]));
+  const byKey = indexTitles(searched);
   const pool = [current, ...related.filter((t) => t.key !== current.key).map((t) => enrich(t, byKey))];
   const poolKeys = new Set(pool.map((t) => t.key));
   // кандидаты: связи сайта + результаты поиска; результаты поиска без проверенного совпадения не показываются
   const candidates = [...pool, ...[...byKey.values()].filter((t) => !poolKeys.has(t.key))];
-  const matches = matchTitles(g.nodes.values(), candidates, user.rejected());
-  // текущий тайтл сопоставлен по определению, остальные привязки к нему снимаем
-  for (const [id, m] of matches) if (m.title.key === current.key && id !== rootId) matches.delete(id);
-  matches.set(rootId, { title: current, confidence: current.anilistId ? 'id' : 'name' });
-
-  const unmatched = ordering.all.map((n) => n.id).filter((id) => !matches.has(id));
-  await searchMissing(unmatched, g, matches, deps);
+  const rematch = () => {
+    const unique = indexTitles(candidates);
+    const matches = matchTitles(g.nodes.values(), [...unique.values()], user.rejected());
+    // Одной даты недостаточно для ссылки из произвольного результата поиска.
+    for (const [id, m] of matches) if (m.confidence === 'date' && !poolKeys.has(m.title.key)) matches.delete(id);
+    // Текущий тайтл сопоставлен по определению, остальные привязки к нему снимаем.
+    for (const [id, m] of matches) if (m.title.key === current.key && id !== rootId) matches.delete(id);
+    matches.set(rootId, { title: current, confidence: current.anilistId ? 'id' : 'name' });
+    return matches;
+  };
+  const branchIds = [...ordering.branches]
+    .sort((a, b) => Number(a.kind === 'other') - Number(b.kind === 'other'))
+    .map((n) => n.id);
+  await searchMissing([ordering.all.map((n) => n.id), branchIds], g, candidates, queried, rematch, deps);
+  const matches = rematch();
+  const parts = matchParts(g.nodes.values(), matches, [...indexTitles(candidates).values()], user.rejected());
+  const expand = (n: OrderedNode): OrderItem[] => {
+    const primary = toItem(n, g, matches, adapter);
+    const titles = parts.get(n.id) ?? [];
+    const extra = titles.map((match): OrderItem => ({
+      ...primary,
+      watchKey: `site:${adapter.id}:${match.title.key}`,
+      title: match.title.displayName,
+      subtitle: undefined,
+      date: match.title.date ?? primary.date,
+      index: undefined,
+      continuation: true,
+      isCurrent: match.title.key === current.key,
+      flags: [...primary.flags, 'продолжение той же записи'],
+      match,
+      cover: match.title.cover ?? primary.cover,
+      coverLarge: match.title.cover ?? primary.coverLarge,
+    }));
+    if (titles.length) primary.isCurrent = primary.match?.title.key === current.key;
+    return [primary, ...extra];
+  };
 
   if (ordering.main.length === 0) notes.push('Порядок не определён.');
 
-  const used = new Set([...matches.values()].map((m) => m.title.key));
+  const used = new Set([...matches.values(), ...[...parts.values()].flat()].map((m) => m.title.key));
   const orphans: OrderItem[] = pool
     .filter((t) => !used.has(t.key) && t.relationKind !== 'other')
     .map((t) => ({
@@ -246,8 +281,8 @@ export async function buildWatchOrder(key: string, deps: Deps): Promise<OrderRes
     mode: 'anilist',
     // ключ франшизы для своего порядка: самый ранний тайтл основной линии одинаков на всех её страницах
     franchiseKey: `al:${ordering.main[0]?.id ?? rootId}`,
-    items: ordering.all.map((n) => toItem(n, g, matches, adapter)),
-    branches: [...ordering.branches.map((n) => toItem(n, g, matches, adapter)), ...orphans],
+    items: ordering.all.flatMap(expand),
+    branches: [...ordering.branches.flatMap(expand), ...orphans],
     notes,
   };
 }

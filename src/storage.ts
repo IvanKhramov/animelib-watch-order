@@ -11,7 +11,7 @@ export interface KV {
 /** Версия пользовательских данных (отметки, порядок, настройки). Менять только с миграцией. */
 export const SCHEMA = 'v1';
 /** Версия кэша: при смене формата данных старые записи просто перестают читаться. */
-export const CACHE_SCHEMA = 'v2';
+export const CACHE_SCHEMA = 'v3';
 
 export function memoryKV(): KV {
   const m = new Map<string, unknown>();

@@ -103,6 +103,8 @@ export interface OrderItem {
   kind: ItemKind;
   /** номер в основной линии (1..n) */
   index?: number;
+  /** Ещё одна карточка той же записи AniList, без отдельного номера. */
+  continuation?: boolean;
   isCurrent: boolean;
   flags: string[];
   match?: SiteMatch;
